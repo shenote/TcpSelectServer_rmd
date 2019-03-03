@@ -1,339 +1,428 @@
 #pragma once
 #include <winsock.h>
-//--------------------------------------------------
-//--------------------------------------------------
-// 친구관리 프로토콜
-//
-//
-//--------------------------------------------------
 
-#define dfNETWORK_PORT		25000
-
-#define dfNICK_MAX_LEN		20
-#define dfPACKET_CODE		0x89
-
-#define WM_SOCKET (WM_USER+1)
-
-//------------------------------------------------------
-//  패킷헤더
-//
-//	| PacketCode | MsgType | PayloadSize | * Payload * |
-//		1Byte       2Byte      2Byte        Size Byte     
-//
-//------------------------------------------------------
-
-#pragma pack(push, 1)   
+#define dfNETWORK_PORT 20000
+#define dfPACKET_CODE 0x89
+#define dfPACKET_END_CODE 0x79
 
 struct st_PACKET_HEADER
 {
-	BYTE	byCode;
-
-	WORD	wMsgType;
-	WORD	wPayloadSize;
+	BYTE	byCode;			// 패킷코드 0x89 고정.
+	BYTE	bySize;			// 패킷 사이즈.
+	BYTE	byType;			// 패킷타입.
+	BYTE	byTemp;			// 사용안함.
 };
 
-#pragma pack(pop)
-
-
-//------------------------------------------------------------
-// 회원가입 요청
+//---------------------------------------------------------------
+// 패킷의 가장 앞에 들어갈 패킷코드.
+//---------------------------------------------------------------
+#define dfNETWORK_PACKET_CODE	((BYTE)0x89)
+//---------------------------------------------------------------
+// 패킷의 가장 뒤에 들어갈 패킷코드.
+//---------------------------------------------------------------
+#define dfNETWORK_PACKET_END	((BYTE)0x79)
+//---------------------------------------------------------------
+// 패킷의 끝 부분에는 1Byte 의 EndCode 가 포함된다.  0x79
 //
-// {
-//		WCHAR[dfNICK_MAX_LEN]	닉네임
-// }
-//------------------------------------------------------------
-#define df_REQ_ACCOUNT_ADD				1
+//---------------------------------------------------------------
 
-//------------------------------------------------------------
-// 회원가입 결과
+
+#define	dfPACKET_SC_CREATE_MY_CHARACTER			0
+//---------------------------------------------------------------
+// 0 - 클라이언트 자신의 캐릭터 할당		Server -> Client
 //
-// {
-//		UINT64		AccountNo
-// }
-//------------------------------------------------------------
-#define df_RES_ACCOUNT_ADD				2
-
-
-
-
-//------------------------------------------------------------
-// 회원로그인
+// 서버에 접속시 최초로 받게되는 패킷으로 자신이 할당받은 ID 와
+// 자신의 최초 위치, HP 를 받게 된다. (처음에 한번 받게 됨)
+// 
+// 이 패킷을 받으면 자신의 ID,X,Y,HP 를 저장하고 캐릭터를 생성시켜야 한다.
 //
-// {
-//		UINT64		AccountNo
-// }
-//------------------------------------------------------------
-#define df_REQ_LOGIN					3
-
-//------------------------------------------------------------
-// 회원로그인 결과
+//	4	-	ID
+//	1	-	Direction
+//	2	-	X
+//	2	-	Y
+//	1	-	HP
 //
-// {
-//		UINT64					AccountNo		// 0 이면 실패
-//		WCHAR[dfNICK_MAX_LEN]	NickName
-// }
-//------------------------------------------------------------
-#define df_RES_LOGIN					4
+//---------------------------------------------------------------
 
 
+#pragma pack(push, 1)
 
-//------------------------------------------------------------
-// 회원리스트 요청
+struct stPACKET_SC_CREATE_MY_CHARACTER
+{
+	DWORD	ID;
+	BYTE	Direction;
+	WORD	X;
+	WORD	Y;
+	BYTE	HP;
+};
+
+struct st_SESSION
+{
+	SOCKET socket;
+	DWORD dwSessionID;		// 접속자의 고유 세션 ID
+	SOCKADDR_IN sockAddr;
+	RingBuffer sendQ;
+	RingBuffer recvQ;
+	DWORD dwHartBit;		// 하트비트 전문용어로 tcpip 3계층에서 해주는 keppAlive 하지만 두시간만다 체크해서 의미가 없다.
+};
+
+struct st_SECTOR_POS
+{
+	int iX;
+	int iY;
+};
+
+struct st_SECTOR_AROUND
+{
+	int iCount;
+	st_SECTOR_POS around[9];
+};
+
+struct st_CHARACTER
+{
+	DWORD dwClientNo;
+	BYTE byDirection;
+	WORD iX;
+	WORD iY;
+	BYTE byHp;
+
+	st_SESSION * pSession;
+	DWORD dwAction;
+	DWORD dwActionTick;
+
+	WORD iActionX;
+	WORD iActionY;
+
+	st_SECTOR_POS curSector;
+	st_SECTOR_POS oldSector;
+
+	BYTE byArrowDirection;		// 좌우 바로보는 방향
+
+	//st_SECTOR_AROUND around;
+
+};
+
+#pragma pack(pop, 0)
+
+#define	dfPACKET_SC_CREATE_OTHER_CHARACTER		1
+//---------------------------------------------------------------
+// 1. 다른 클라이언트의 캐릭터 생성 패킷		Server -> Client
 //
-// {
-//		없음.
-// }
-//------------------------------------------------------------
-#define df_REQ_ACCOUNT_LIST				10
-
-//------------------------------------------------------------
-// 회원리스트 결과
+// 처음 서버에 접속시 이미 접속되어 있던 캐릭터들의 정보
+// 또는 게임중에 접속된 클라이언트들의 생성 용 정보.
 //
-// {
-//		UINT	Count		// 회원 수
-//		{
-//			UINT64					AccountNo
-//			WCHAR[dfNICK_MAX_LEN]	NickName
-//		}
-// }
-//------------------------------------------------------------
-#define df_RES_ACCOUNT_LIST				11
-
-
-
-
-//------------------------------------------------------------
-// 친구목록 요청
 //
-// {
-//		없음
-// }
-//------------------------------------------------------------
-#define df_REQ_FRIEND_LIST				12
-
-//------------------------------------------------------------
-// 친구목록 결과
+//	4	-	ID
+//	1	-	Direction
+//	2	-	X
+//	2	-	Y
+//	1	-	HP
 //
-// { 
-//		UINT	FriendCount
-//		{
-//			UINT64					FriendAccountNo
-//			WCHAR[dfNICK_MAX_LEN]	NickName
-//		}	
-// }
-//------------------------------------------------------------
-#define df_RES_FRIEND_LIST				13
+//---------------------------------------------------------------
 
+#pragma pack(push, 1)
 
+struct stPACKET_SC_CREATE_OTHER_CHARACTER
+{
+	DWORD	ID;
+	BYTE	Direction;
+	WORD	X;
+	WORD	Y;
+	BYTE	HP;
+};
 
+#pragma pack(pop, 0)
 
-
-
-//------------------------------------------------------------
-// 친구요청 보낸 목록  요청
+#define	dfPACKET_SC_DELETE_CHARACTER			2
+//---------------------------------------------------------------
+// 2. 캐릭터 삭제 패킷						Server -> Client
 //
-// {
-//		없음
-// }
-//------------------------------------------------------------
-#define df_REQ_FRIEND_REQUEST_LIST		14
-
-//------------------------------------------------------------
-// 친구목록 결과
+// 캐릭터의 접속해제 또는 캐릭터가 죽었을때 전송됨.
 //
-// {
-//		UINT	FriendCount
-//		{
-//			UINT64					FriendAccountNo
-//			WCHAR[dfNICK_MAX_LEN]	NickName
-//		}	
-// }
-//------------------------------------------------------------
-#define df_RES_FRIEND_REQUEST_LIST		15
-
-
-
-
-//------------------------------------------------------------
-// 친구요청 받은거 목록  요청
+//	4	-	ID
 //
-// {
-//		없음
-// }
-//------------------------------------------------------------
-#define df_REQ_FRIEND_REPLY_LIST		16
+//---------------------------------------------------------------
 
-//------------------------------------------------------------
-// 친구목록 결과
+
+
+#define	dfPACKET_CS_MOVE_START					10
+//---------------------------------------------------------------
+// 10. 캐릭터 이동시작 패킷						Client -> Server
 //
-// {
-//		UINT	FriendCount
-//		{
-//			UINT64					FriendAccountNo
-//			WCHAR[dfNICK_MAX_LEN]	NickName
-//		}	
-// }
-//------------------------------------------------------------
-#define df_RES_FRIEND_REPLY_LIST		17
-
-
-
-//------------------------------------------------------------
-// 친구관계 끊기
+// 자신의 캐릭터 이동시작시 이 패킷을 보낸다.
+// 이동 중에는 본 패킷을 보내지 않으며, 키 입력이 변경되었을 경우에만
+// 보내줘야 한다.
 //
-// {
-//		UINT64	FriendAccountNo
-// }
-//------------------------------------------------------------
-#define df_REQ_FRIEND_REMOVE			20
-
-//------------------------------------------------------------
-// 친구관계 끊기 결과
+// (왼쪽 이동중 위로 이동 / 왼쪽 이동중 왼쪽 위로 이동... 등등)
 //
-// {
-//		UINT64	FriendAccountNo
+//	1	-	Direction	( 방향 디파인 값 8방향 사용 )
+//	2	-	X
+//	2	-	Y
 //
-//		BYTE	Result
-// }
-//------------------------------------------------------------
-#define df_RES_FRIEND_REMOVE			21
+//---------------------------------------------------------------
 
-#define df_RESULT_FRIEND_REMOVE_OK			1
-#define df_RESULT_FRIEND_REMOVE_NOTFRIEND	2
-#define df_RESULT_FRIEND_REMOVE_FAIL		3
+#pragma pack(push, 1)
+
+struct stPACKET_CS_MOVE_START
+{
+	BYTE	Direction;
+	WORD	X;
+	WORD	Y;
+};
+
+#pragma pack(pop, 0)
+
+#define dfPACKET_MOVE_DIR_LL					0
+#define dfPACKET_MOVE_DIR_LU					1
+#define dfPACKET_MOVE_DIR_UU					2
+#define dfPACKET_MOVE_DIR_RU					3
+#define dfPACKET_MOVE_DIR_RR					4
+#define dfPACKET_MOVE_DIR_RD					5
+#define dfPACKET_MOVE_DIR_DD					6
+#define dfPACKET_MOVE_DIR_LD					7
 
 
 
-//------------------------------------------------------------
-// 친구요청
+#define	dfPACKET_SC_MOVE_START					11
+//---------------------------------------------------------------
+// 캐릭터 이동시작 패킷						Server -> Client
 //
-// {
-//		UINT64	FriendAccountNo
-// }
-//------------------------------------------------------------
-#define df_REQ_FRIEND_REQUEST			22
-
-//------------------------------------------------------------
-// 친구요청 결과
+// 다른 유저의 캐릭터 이동시 본 패킷을 받는다.
+// 패킷 수신시 해당 캐릭터를 찾아 이동처리를 해주도록 한다.
+// 
+// 패킷 수신 시 해당 키가 계속해서 눌린것으로 생각하고
+// 해당 방향으로 계속 이동을 하고 있어야만 한다.
 //
-// {
-//		UINT64	FriendAccountNo
+//	4	-	ID
+//	1	-	Direction	( 방향 디파인 값 8방향 )
+//	2	-	X
+//	2	-	Y
 //
-//		BYTE	Result
-// }
-//------------------------------------------------------------
-#define df_RES_FRIEND_REQUEST			23
+//---------------------------------------------------------------
 
-#define df_RESULT_FRIEND_REQUEST_OK			1
-#define df_RESULT_FRIEND_REQUEST_NOTFOUND	2
-#define df_RESULT_FRIEND_REQUEST_AREADY		3
+#pragma pack(push, 1)
+
+struct stPACKET_SC_MOVE_START
+{
+	DWORD	id;
+	BYTE	Direction;
+	WORD	X;
+	WORD	Y;
+};
+
+#pragma pack(pop, 0)
 
 
-
-
-//------------------------------------------------------------
-// 친구요청 취소
+#define	dfPACKET_CS_MOVE_STOP					12
+//---------------------------------------------------------------
+// 캐릭터 이동중지 패킷						Client -> Server
 //
-// {
-//		UINT64	FriendAccountNo
-// }
-//------------------------------------------------------------
-#define df_REQ_FRIEND_CANCEL			24
-
-//------------------------------------------------------------
-// 친구요청취소 결과
+// 이동중 키보드 입력이 없어서 정지되었을 때, 이 패킷을 서버에 보내준다.
 //
-// {
-//		UINT64	FriendAccountNo
+//	1	-	Direction	( 방향 디파인 값 좌/우만 사용 )
+//	2	-	X
+//	2	-	Y
 //
-//		BYTE	Result
-// }
-//------------------------------------------------------------
-#define df_RES_FRIEND_CANCEL			25
-
-#define df_RESULT_FRIEND_CANCEL_OK			1
-#define df_RESULT_FRIEND_CANCEL_NOTFRIEND	2
-#define df_RESULT_FRIEND_CANCEL_FAIL		3
+//---------------------------------------------------------------
 
 
-
-
-//------------------------------------------------------------
-// 친구요청 거부
+#define	dfPACKET_SC_MOVE_STOP					13
+//---------------------------------------------------------------
+// 캐릭터 이동중지 패킷						Server -> Client
 //
-// {
-//		UINT64	FriendAccountNo
-// }
-//------------------------------------------------------------
-#define df_REQ_FRIEND_DENY				26
-
-//------------------------------------------------------------
-// 친구요청 거부 결과
+// ID 에 해당하는 캐릭터가 이동을 멈춘것이므로 
+// 캐릭터를 찾아서 방향과, 좌표를 입력해주고 멈추도록 처리한다.
 //
-// {
-//		UINT64	FriendAccountNo
+//	4	-	ID
+//	1	-	Direction	( 방향 디파인 값. 좌/우만 사용 )
+//	2	-	X
+//	2	-	Y
 //
-//		BYTE	Result
-// }
-//------------------------------------------------------------
-#define df_RES_FRIEND_DENY				27
+//---------------------------------------------------------------
 
-#define df_RESULT_FRIEND_DENY_OK			1
-#define df_RESULT_FRIEND_DENY_NOTFRIEND		2
-#define df_RESULT_FRIEND_DENY_FAIL			3
+#pragma pack(push, 1)
 
+struct stPACKET_SC_MOVE_STOP
+{
+	DWORD	id;
+	BYTE	Direction;
+	WORD	X;
+	WORD	Y;
+};
 
+#pragma pack(pop, 0)
 
-
-//------------------------------------------------------------
-// 친구요청 수락
+#define	dfPACKET_CS_ATTACK1						20
+//---------------------------------------------------------------
+// 캐릭터 공격 패킷							Client -> Server
 //
-// {
-//		UINT64	FriendAccountNo
-// }
-//------------------------------------------------------------
-#define df_REQ_FRIEND_AGREE				28
-
-//------------------------------------------------------------
-// 친구요청 수락 결과
+// 공격 키 입력시 본 패킷을 서버에게 보낸다.
+// 충돌 및 데미지에 대한 결과는 서버에서 알려 줄 것이다.
 //
-// {
-//		UINT64	FriendAccountNo
+// 공격 동작 시작시 한번만 서버에게 보내줘야 한다.
 //
-//		BYTE	Result
-// }
-//------------------------------------------------------------
-#define df_RES_FRIEND_AGREE				29
-
-#define df_RESULT_FRIEND_AGREE_OK			1
-#define df_RESULT_FRIEND_AGREE_NOTFRIEND	2
-#define df_RESULT_FRIEND_AGREE_FAIL			3
-
-
-
-
-
-
-
-
-
-//------------------------------------------------------------
-// 스트레스 테스트용 에코
+//	1	-	Direction	( 방향 디파인 값. 좌/우만 사용 )
+//	2	-	X
+//	2	-	Y	
 //
-// {
-//			WORD		Size
-//			Size		문자열 (WCHAR 유니코드)
-// }
-//------------------------------------------------------------
-#define df_REQ_STRESS_ECHO				100
+//---------------------------------------------------------------
 
-//------------------------------------------------------------
-// 스트레스 테스트용 에코응답
+#define	dfPACKET_SC_ATTACK1						21
+//---------------------------------------------------------------
+// 캐릭터 공격 패킷							Server -> Client
 //
-// {
-//			WORD		Size
-//			Size		문자열 (WCHAR 유니코드)
-// }
-//------------------------------------------------------------
-#define df_RES_STRESS_ECHO				101
+// 패킷 수신시 해당 캐릭터를 찾아서 공격1번 동작으로 액션을 취해준다.
+// 방향이 다를 경우에는 해당 방향으로 바꾼 후 해준다.
+//
+//	4	-	ID
+//	1	-	Direction	( 방향 디파인 값. 좌/우만 사용 )
+//	2	-	X
+//	2	-	Y
+//
+//---------------------------------------------------------------
+
+#pragma pack(push, 1)
+
+struct stPACKET_SC_ATTACK1
+{
+	DWORD	id;
+	BYTE	Direction;
+	WORD	X;
+	WORD	Y;
+};
+
+#pragma pack(pop, 0)
+
+
+#define	dfPACKET_CS_ATTACK2						22
+//---------------------------------------------------------------
+// 캐릭터 공격 패킷							Client -> Server
+//
+// 공격 키 입력시 본 패킷을 서버에게 보낸다.
+// 충돌 및 데미지에 대한 결과는 서버에서 알려 줄 것이다.
+//
+// 공격 동작 시작시 한번만 서버에게 보내줘야 한다.
+//
+//	1	-	Direction	( 방향 디파인 값. 좌/우만 사용 )
+//	2	-	X
+//	2	-	Y
+//
+//---------------------------------------------------------------
+
+
+#define	dfPACKET_SC_ATTACK2						23
+//---------------------------------------------------------------
+// 캐릭터 공격 패킷							Server -> Client
+//
+// 패킷 수신시 해당 캐릭터를 찾아서 공격2번 동작으로 액션을 취해준다.
+// 방향이 다를 경우에는 해당 방향으로 바꾼 후 해준다.
+//
+//	4	-	ID
+//	1	-	Direction	( 방향 디파인 값. 좌/우만 사용 )
+//	2	-	X
+//	2	-	Y
+//
+//---------------------------------------------------------------
+
+#pragma pack(push, 1)
+
+struct stPACKET_SC_ATTACK2
+{
+	DWORD	id;
+	BYTE	Direction;
+	WORD	X;
+	WORD	Y;
+};
+
+#pragma pack(pop, 0)
+
+#define	dfPACKET_CS_ATTACK3						24
+//---------------------------------------------------------------
+// 캐릭터 공격 패킷							Client -> Server
+//
+// 공격 키 입력시 본 패킷을 서버에게 보낸다.
+// 충돌 및 데미지에 대한 결과는 서버에서 알려 줄 것이다.
+//
+// 공격 동작 시작시 한번만 서버에게 보내줘야 한다.
+//
+//	1	-	Direction	( 방향 디파인 값. 좌/우만 사용 )
+//	2	-	X
+//	2	-	Y
+//
+//---------------------------------------------------------------
+
+#define	dfPACKET_SC_ATTACK3						25
+//---------------------------------------------------------------
+// 캐릭터 공격 패킷							Server -> Client
+//
+// 패킷 수신시 해당 캐릭터를 찾아서 공격3번 동작으로 액션을 취해준다.
+// 방향이 다를 경우에는 해당 방향으로 바꾼 후 해준다.
+//
+//	4	-	ID
+//	1	-	Direction	( 방향 디파인 값. 좌/우만 사용 )
+//	2	-	X
+//	2	-	Y
+//
+//---------------------------------------------------------------
+
+#pragma pack(push, 1)
+
+struct stPACKET_SC_ATTACK3
+{
+	DWORD	id;
+	BYTE	Direction;
+	WORD	X;
+	WORD	Y;
+};
+
+#pragma pack(pop, 0)
+
+#define	dfPACKET_SC_DAMAGE						30
+//---------------------------------------------------------------
+// 캐릭터 데미지 패킷							Server -> Client
+//
+// 공격에 맞은 캐릭터의 정보를 보냄.
+//
+//	4	-	AttackID	( 공격자 ID )
+//	4	-	DamageID	( 피해자 ID )
+//	1	-	DamageHP	( 피해자 HP )
+//
+//---------------------------------------------------------------
+
+#pragma pack(push, 1)
+
+struct stPACKET_SC_DAMAGE
+{
+	DWORD	AttackID;
+	DWORD	DamageID;
+	BYTE	DamageHP;
+};
+
+#pragma pack(pop, 0)
+
+
+
+#define	dfPACKET_SC_SYNC						251
+//---------------------------------------------------------------
+// 동기화를 위한 패킷					Server -> Client
+//
+// 서버로부터 동기화 패킷을 받으면 해당 캐릭터를 찾아서
+// 캐릭터 좌표를 보정해준다.
+//
+//	4	-	ID
+//	2	-	X
+//	2	-	Y
+//
+//---------------------------------------------------------------
+
+#pragma pack(push, 1)
+
+struct stPACKET_SC_SYNC
+{
+	DWORD	id;
+	WORD	X;
+	WORD	Y;
+};
+
+#pragma pack(pop, 0)
 

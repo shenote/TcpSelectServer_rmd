@@ -16,7 +16,7 @@ RingBuffer::RingBuffer(int iBufferSize)
 
 RingBuffer::~RingBuffer()
 {
-	delete _pBuffer;
+	delete[] _pBuffer;
 }
 
 unsigned int RingBuffer::GetBufferSize(void)

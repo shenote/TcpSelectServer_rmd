@@ -10,18 +10,27 @@ Network::~Network()
 {
 }
 
+BOOL Network::DomaionToIP(const WCHAR *szDomain, IN_ADDR *pAddr)
+{
+	ADDRINFOW * pAddrInfo;
+	SOCKADDR_IN * pSockAddr;
+	if (GetAddrInfo(szDomain, L"0", NULL, &pAddrInfo) != 0)
+	{
+		return FALSE;
+	}
+	pSockAddr = (SOCKADDR_IN*)pAddrInfo->ai_addr;
+	*pAddr = pSockAddr->sin_addr;
+	FreeAddrInfo(pAddrInfo);
+	return TRUE;
+}
+
 HRESULT Network::init()
 {
 	_bConnect = false;		 // 서버 바인딩 성공 여부
 	_listenSocket = 0;		 
-	_mUserList.clear();		 // 유저 리스트
-	_mAccountList.clear();	 // 계정 정보 리스트
+	_mSessionList.clear();	// 유저 세션 리스트
 	_packetSz.Clear();		 // 직렬화 초기화
-	_mFriendReqList.clear(); // 친구 요청 리스트 초기화
-	_mFriendList.clear();	 // 친구 리스트 초기화
-
-
-	LoadJSON();
+	_mCharList.clear();		 // 케릭터
 
 	_headerSize = sizeof(st_PACKET_HEADER);
 
@@ -85,176 +94,522 @@ void Network::release()
 	WSACleanup();
 }
 
-void Network::update()
+int Network::DeadReckoningPos(BYTE byDir, DWORD dwActionTick, WORD wOldPosX, WORD wOldPosY, WORD & pPosX, WORD & pPosY)
 {
-	if (!_bConnect)
-		return;
+	// 이동을 시작했던 시작 시작과 현재 시간의 차를 구한다.
+	DWORD dwIntervalTick = timeGetTime() - dwActionTick;
+	int iActionFrame = dwIntervalTick / dfFRAME_COUNT;	// 40ms 세컨드로 나누면 프레임이 나옴
+	int iRemoveFrame = 0;
+	int iValue;
 
-	// accept
-	Accept();
+	int iRPosX = wOldPosX;
+	int iRPosY = wOldPosY;
+	//1. 계산된 프레임으로 X축, Y축의 좌표 이동값을 구함.
+	int iDX = iActionFrame * dfRECKONING_SPEED_PLAYER_X;
+	int iDY = iActionFrame * dfRECKONING_SPEED_PLAYER_Y;
 
-	// user recv, send check
-	if (_mUserList.empty())
-		return;
-
-	// 1명이상 있을때 들어옴
-
-	FD_SET fdReadSet, fdSendSet;
-	FD_ZERO(&fdReadSet);
-	FD_ZERO(&fdSendSet);
-	
-	// Session 소켓 셋팅 만약 클라이언트가 있다면 셋팅을 해놓는다. 사이즈가 64이상이면 루프 한번 더 돈다.
-	int userCnt = 0;
-	auto iter = _mUserList.begin();
-	while (true)
+	switch (byDir)
 	{
-		// 끝 확인 후 종료
-		if (iter == _mUserList.end())
+	case dfPACKET_MOVE_DIR_LL:
+		iRPosX = wOldPosX - iDX;
+		iRPosY = wOldPosY;
+		break;
+	case dfPACKET_MOVE_DIR_LU:
+		iRPosX = wOldPosX - iDX;
+		iRPosY = wOldPosY - iDY;
+		break;
+	case dfPACKET_MOVE_DIR_UU:
+		iRPosX = wOldPosX;
+		iRPosY = wOldPosY - iDY;
+		break;
+	case dfPACKET_MOVE_DIR_RU:
+		iRPosX = wOldPosX + iDX;
+		iRPosY = wOldPosY - iDY;
+		break;
+	case dfPACKET_MOVE_DIR_RR:
+		iRPosX = wOldPosX + iDX;
+		iRPosY = wOldPosY;
+		break;
+	case dfPACKET_MOVE_DIR_RD:
+		iRPosX = wOldPosX + iDX;
+		iRPosY = wOldPosY + iDY;
+		break;
+	case dfPACKET_MOVE_DIR_DD:
+		iRPosX = wOldPosX;
+		iRPosY = wOldPosY + iDY;
+		break;
+	case dfPACKET_MOVE_DIR_LD:
+		iRPosX = wOldPosX - iDX;
+		iRPosY = wOldPosY + iDY;
+		break;
+	}
+
+	// 여기까지가 iRPosX, iRPosY에 계산된 좌표가 완료 되었음.
+	// 이 아래 부분은 계산된 좌표가 화면의 이동 영역을 벗어난 경우 그 액션을 잘라내기 위해서 
+	// 영역을 벗어난 이후의 프레임을 계산 하는 과정
+	
+	if (iRPosX <= dfRANGE_MOVE_LEFT)
+	{
+		iValue = abs(dfRANGE_MOVE_LEFT - abs(iRPosX)) / dfRECKONING_SPEED_PLAYER_X;
+		iRemoveFrame = max(iValue, iRemoveFrame);
+	}
+	if (iRPosX >= dfRANGE_MOVE_RIGHT)
+	{
+		iValue = abs(dfRANGE_MOVE_RIGHT - iRPosX) / dfRECKONING_SPEED_PLAYER_X;
+		iRemoveFrame = max(iValue, iRemoveFrame);
+	}
+	if (iRPosY <= dfRANGE_MOVE_TOP)
+	{
+		iValue = abs(dfRANGE_MOVE_TOP - abs(iRPosY)) / dfRECKONING_SPEED_PLAYER_Y;
+		iRemoveFrame = max(iValue, iRemoveFrame);
+	}
+	if (iRPosY >= dfRANGE_MOVE_BOTTOM)
+	{
+		iValue = abs(dfRANGE_MOVE_BOTTOM - iRPosY) / dfRECKONING_SPEED_PLAYER_Y;
+		iRemoveFrame = max(iValue, iRemoveFrame);
+	}
+
+	// 위에서 계산된 결과 삭제 되어야 할 프레임이 나타났다면 좌표를 다시 재 계산
+	if (iRemoveFrame > 0)
+	{
+		iActionFrame -= iRemoveFrame;
+		// 보정된 좌표로 다시 계산
+		iDX = iActionFrame * dfRECKONING_SPEED_PLAYER_X;
+		iDY = iActionFrame * dfRECKONING_SPEED_PLAYER_Y;
+
+		switch (byDir)
 		{
-			iter = _mUserList.begin();
-			userCnt = 0;
+		case dfPACKET_MOVE_DIR_LL:
+			iRPosX = wOldPosX - iDX;
+			iRPosY = wOldPosY;
+			break;
+		case dfPACKET_MOVE_DIR_LU:
+			iRPosX = wOldPosX - iDX;
+			iRPosY = wOldPosY - iDY;
+			break;
+		case dfPACKET_MOVE_DIR_UU:
+			iRPosX = wOldPosX;
+			iRPosY = wOldPosY - iDY;
+			break;
+		case dfPACKET_MOVE_DIR_RU:
+			iRPosX = wOldPosX + iDX;
+			iRPosY = wOldPosY - iDY;
+			break;
+		case dfPACKET_MOVE_DIR_RR:
+			iRPosX = wOldPosX + iDX;
+			iRPosY = wOldPosY;
+			break;
+		case dfPACKET_MOVE_DIR_RD:
+			iRPosX = wOldPosX + iDX;
+			iRPosY = wOldPosY + iDY;
+			break;
+		case dfPACKET_MOVE_DIR_DD:
+			iRPosX = wOldPosX;
+			iRPosY = wOldPosY + iDY;
+			break;
+		case dfPACKET_MOVE_DIR_LD:
+			iRPosX = wOldPosX - iDX;
+			iRPosY = wOldPosY + iDY;
 			break;
 		}
+	}
 
-		for (;iter != _mUserList.end(); ++iter)
+	iRPosX = min(iRPosX, dfRANGE_MOVE_RIGHT);
+	iRPosX = max(iRPosX, dfRANGE_MOVE_LEFT);
+	iRPosY = min(iRPosY, dfRANGE_MOVE_BOTTOM);
+	iRPosY = max(iRPosY, dfRANGE_MOVE_TOP);
+
+	pPosX = iRPosX;
+	pPosY = iRPosY;
+
+	return iActionFrame;
+}
+
+void Network::DamageHitAround(st_SESSION * pSession, int iDamage)
+{
+	// 주변 9개 섹터의 유닛들 중에 현재 플레이어의 좌표롸 가장 가까운 녀석을 찾아서 데미지를 먹인다.
+
+	list<st_CHARACTER * > *pSectorList;
+	list<st_CHARACTER *>::iterator ListIter;
+	st_SECTOR_AROUND CurSectorAround;
+	//cPacketSerialz Packet;
+	_packetSz.Clear();
+
+	st_CHARACTER * character = FindCharacter(pSession);
+	GetSectorAround(character->curSector.iX, character->curSector.iY, &CurSectorAround);
+
+	for (int i = 0; i < CurSectorAround.iCount; ++i)
+	{
+		pSectorList = &g_Sector[CurSectorAround.around[i].iY][CurSectorAround.around[i].iX];
+
+		// 섹터에 인원이 없으면 리턴
+		if (pSectorList->size() == 0)
+			continue;
+
+		for (ListIter = pSectorList->begin(); ListIter != pSectorList->end(); ListIter++)
 		{
-			// fd셋의 등록 갯수 초과 임으로 다시 한번 돌아야함.
-			FD_SET(iter->second->socket, &fdReadSet);
-			FD_SET(iter->second->socket, &fdSendSet);
-			userCnt++;
-			if (userCnt > 63)
+			if ((*ListIter) == character)
+				continue;
+
+			// 케릭터가 바라보는 방향
+			if (character->byArrowDirection == dfPACKET_MOVE_DIR_LL)
 			{
-				// 포문 강제 종료
+				// X축이 케릭터보다 작아야함
+				if ((*ListIter)->iX > character->iX)
+					continue;
+			}
+			else if(character->byArrowDirection == dfPACKET_MOVE_DIR_RR)
+			{
+				// X축이 케릭터보다 커야함
+				if ((*ListIter)->iX < character->iX)
+					continue;
+			}
+			if(abs((*ListIter)->iX - character->iX) < dfARRANGE_DAMAGE_X && abs((*ListIter)->iY - character->iY) < dfARRANGE_DAMAGE_Y)
+			{
+
+				if ((*ListIter)->byHp - iDamage <= 0)
+					(*ListIter)->byHp = 0;
+				else
+					(*ListIter)->byHp -= iDamage;
+
+				MakePacket_DAMAGE(&_packetSz, character->dwClientNo, (*ListIter)->dwClientNo, (*ListIter)->byHp);
+				// 맞는애 중심으로 보낸다.
+				SendPacket_Around((*ListIter)->pSession, &_packetSz, true);
+				_packetSz.Clear();
 				break;
 			}
 		}
 
-		// Read & Send
-		timeval tv;
-		tv.tv_sec = 0;
-		tv.tv_usec = 0;
+	}
+}
 
-		// 읽을게 있는지? 등록되어 있는 유저중 몇명의 유저들께 들어왔다.
-		// 샌드는 따로 
-		int selectRet = select(NULL, &fdReadSet, &fdSendSet, NULL, &tv);
-		if (selectRet > 0)
+
+void Network::update()
+{
+	for (auto iter = _mCharList.begin(); iter != _mCharList.end();)
+	{
+		auto backUpIter = iter;
+		advance(iter, 1);
+		//iter++;
+		//if (backUpIter->second->byHp == 0)
+		//{
+		//	DisconnectSession(backUpIter->first);
+		//	continue;
+		//}
+
+		switch (backUpIter->second->dwAction)
 		{
-			// 유저를 찾아서 검사 한다.
-
-			for (auto userIter = _mUserList.begin(); userIter != _mUserList.end();)
+		case dfPACKET_SC_MOVE_START:
+			switch (backUpIter->second->byDirection)
 			{
-				// 유저가 중간에 나갔을때 다음 이터가 지워짐으로 그걸 방지하기 위함
-				auto copyIter = userIter;
-				userIter++;
-
-				// 패킷 처리
-				SOCKET sk = copyIter->second->socket;
-				if (FD_ISSET(sk, &fdReadSet))
+			case dfPACKET_MOVE_DIR_LL:
+				backUpIter->second->byArrowDirection = dfPACKET_MOVE_DIR_LL;
+				backUpIter->second->iX -= dfRECKONING_SPEED_PLAYER_X;
+				if (backUpIter->second->iX < 10)
+					backUpIter->second->iX = 11;
+				break;
+			case dfPACKET_MOVE_DIR_LU:
+				backUpIter->second->byArrowDirection = dfPACKET_MOVE_DIR_LL;
+				if (backUpIter->second->iX > dfRECKONING_SPEED_PLAYER_X && backUpIter->second->iY > dfRECKONING_SPEED_PLAYER_Y)
 				{
-					char buf[20000] = "\0";
-					int recvSize = recv(sk, buf, copyIter->second->recvQ.GetFreeSize(), 0);
+					backUpIter->second->iX -= dfRECKONING_SPEED_PLAYER_X;
+					backUpIter->second->iY -= dfRECKONING_SPEED_PLAYER_Y;
+				}
+				break;
+			case dfPACKET_MOVE_DIR_UU:
+				backUpIter->second->iY -= dfRECKONING_SPEED_PLAYER_Y;
+				if (backUpIter->second->iY < dfRECKONING_SPEED_PLAYER_Y)
+					backUpIter->second->iY = dfRECKONING_SPEED_PLAYER_Y;
+				break;
+			case dfPACKET_MOVE_DIR_RU:
+				backUpIter->second->byArrowDirection = dfPACKET_MOVE_DIR_RR;
+				if (backUpIter->second->iX < 6397 && backUpIter->second->iY > dfRECKONING_SPEED_PLAYER_Y)
+				{
+					backUpIter->second->iX += dfRECKONING_SPEED_PLAYER_X;
+					backUpIter->second->iY -= dfRECKONING_SPEED_PLAYER_Y;
+				}
+				break;
+			case dfPACKET_MOVE_DIR_RR:
+				backUpIter->second->byArrowDirection = dfPACKET_MOVE_DIR_RR;
+				backUpIter->second->iX += dfRECKONING_SPEED_PLAYER_X;
+				if (backUpIter->second->iX > 6397)
+					backUpIter->second->iX = 6397;
+				break;
+			case dfPACKET_MOVE_DIR_RD:
+				backUpIter->second->byArrowDirection = dfPACKET_MOVE_DIR_RR;
+				if (backUpIter->second->iX < 6397 && backUpIter->second->iY < 6397)
+				{
+					backUpIter->second->iX += dfRECKONING_SPEED_PLAYER_X;
+					backUpIter->second->iY += dfRECKONING_SPEED_PLAYER_Y;
+				}
+				break;
+			case dfPACKET_MOVE_DIR_DD:
+				backUpIter->second->iY += dfRECKONING_SPEED_PLAYER_Y;
+				if (backUpIter->second->iY > 6397)
+					backUpIter->second->iY = 6397;
+				break;
+			case dfPACKET_MOVE_DIR_LD:
+				backUpIter->second->byArrowDirection = dfPACKET_MOVE_DIR_LL;
+				if (backUpIter->second->iX > dfRECKONING_SPEED_PLAYER_X && backUpIter->second->iY < 6397)
+				{
+					backUpIter->second->iX -= dfRECKONING_SPEED_PLAYER_X;
+					backUpIter->second->iY += dfRECKONING_SPEED_PLAYER_Y;
+				}
+				break;
+			}
+			//_LOG(dfLOG_LEVEL_DEBUG, L"# gamerun # SessionID:%d / Dir:%d / X:%d / Y:%d", iter->second->dwClientNo, iter->second->byDirection, iter->second->iX, iter->second->iY);
+			if (backUpIter->second->byDirection >= dfPACKET_MOVE_DIR_LL && backUpIter->second->byDirection <= dfPACKET_MOVE_DIR_LD)
+			{
+				if (Sector_UpdateCharacter(backUpIter->second))
+				{
+					CharacterSectorUpdatePacket(backUpIter->second);
+				}
+			}
+			break;
+		case dfPACKET_SC_MOVE_STOP:
+			break;
+		
+		default:
+			break;
+		}
+	}
+	
+}
 
-					if (recvSize == 0 || recvSize == SOCKET_ERROR)
+void Network::netIOProcess()
+{
+	if (!_bConnect)
+		return;
+
+	netProc_Accept();
+
+	if (_mSessionList.empty())
+		return;
+
+	FD_SET fdReadSet, fdSendSet;
+
+	FD_ZERO(&fdReadSet);
+	FD_ZERO(&fdSendSet);
+
+	SOCKET skUserTable[FD_SETSIZE] = { INVALID_SOCKET,}; // 초기화가 되지 않음.
+	memset(skUserTable, INVALID_SOCKET, sizeof(SOCKET) * FD_SETSIZE);
+
+	int iTotalUser = 0;
+	for (auto sessionIter = _mSessionList.begin(); sessionIter != _mSessionList.end();)
+	{
+		// 여기 맵 유저수만큼 유저테이블에 넣고, 유저테이블을 64로 끊어서 돌린다.
+		skUserTable[iTotalUser] = sessionIter->first;
+		FD_SET(sessionIter->second->socket, &fdReadSet);
+		FD_SET(sessionIter->second->socket, &fdSendSet);
+
+		// Disconnect 할때 Map내용이 사라지면 터짐 그래서 이터를 다음 포인터로 가게 만듬
+		//sessionIter++;
+		// 반환이 없고 인덱스를 입력하면 해당 인덱스의 값을 반환
+		advance(sessionIter, 1);
+		++iTotalUser;
+
+		if (iTotalUser >= FD_SETSIZE)
+		{
+			// 패킷 로직 처리
+			netSelectSocket(skUserTable, &fdReadSet, &fdSendSet);
+
+			FD_ZERO(&fdReadSet);
+			FD_ZERO(&fdSendSet);
+
+			memset(skUserTable, INVALID_SOCKET, sizeof(SOCKET) * FD_SETSIZE);
+
+			iTotalUser = 0;
+		}
+	}
+
+	// 처리 되지 않는 패킷 처리
+	if(iTotalUser != 0)
+		netSelectSocket(skUserTable, &fdReadSet, &fdSendSet);
+}
+
+void Network::netSelectSocket(SOCKET * pTableSocket, FD_SET * pReadSet, FD_SET * pWriteSet)
+{
+	TIMEVAL tv;
+	tv.tv_sec = 0;
+	tv.tv_usec = 0;
+
+	// 읽을게 있는지? 등록되어 있는 유저중 몇명의 유저들께 들어왔다.
+	// 샌드는 따로 
+	int selectRet = select(NULL, pReadSet, pWriteSet, NULL, &tv);
+	if (selectRet > 0)
+	{
+		// 유저 테이블에 매핑된 키값으로 처리
+		for (int i = 0; i < FD_SETSIZE; ++i)
+		{
+			if (pTableSocket[i] == INVALID_SOCKET)
+				continue;
+
+			st_SESSION * pSession = FindSession(pTableSocket[i]);
+			if (pSession == nullptr)
+			{
+				continue;
+			}
+
+			// 패킷 처리
+			if (FD_ISSET(pSession->socket, pReadSet))
+			{
+				// 클라에서는 하나주고 하나 받고, 받을 공간이 충분한데, 브로큰 때문에 못 받았다면.. 다음에 다시 받을 수 있지 않나?
+				int recvSize = recv(pSession->socket, pSession->recvQ.GetRearBufferPtr(), pSession->recvQ.GetNotBrokenPutSize(), 0);
+
+				pSession->recvQ.MoveRear(recvSize);
+
+				if (recvSize == 0 || recvSize == SOCKET_ERROR)
+				{
+					DisconnectSession(pSession->socket);
+					continue;
+				}
+
+				//continue;
+				// 처리할게 있으면 다 처리함
+				while (pSession->recvQ.GetUseSize() >= _headerSize)
+				{
+					// 패킷 처리
+					switch ((RECV_CHECK)netProc_Recv(pSession))
 					{
-						printf("DISCONNECT : %d\n", sk);
-						DeleteUser(sk);
+					case RECV_CHECK::RECV_OK:
+						break;
+					case RECV_CHECK::RECV_MORE:
+						break;
+					case RECV_CHECK::RECV_ERROR:
+						if (DisconnectSession(pSession->socket) == false)
+							_LOG(dfLOG_LEVEL_DEBUG, L"지워지지 않은 유저가 있습니다. %d", pSession->socket);
 						continue;
-					}
-					copyIter->second->recvQ.Enqueue(buf, recvSize);
-
-					// 처리할게 있으면 다 처리함
-					while (copyIter->second->recvQ.GetUseSize() >= _headerSize)
-					{
-						char tempBuf[20000] = "\0";
-						copyIter->second->recvQ.Peek(tempBuf, recvSize);
-						st_PACKET_HEADER tempHeader = *(st_PACKET_HEADER*)&tempBuf;
-						int procPacketSize = tempHeader.wPayloadSize + _headerSize;
-						// 패킷 처리
-						switch ((RECV_CHECK)PacketProc(tempBuf, recvSize, sk))
-						{
-						case RECV_CHECK::RECV_OK:
-							// 패킷을 정상적으로 처리 하였음. 다음 패킷이 남아 있는 체크
-							recvSize -= procPacketSize;
-							continue;
-							break;
-						case RECV_CHECK::RECV_MORE:
-							// 패킷을 더 받아야함
-							//copyIter->second->recvQ.Enqueue(copyIter->second->recvQ.GetFrontBufferPtr(), recvSize);
-							break;
-						case RECV_CHECK::RECV_ERROR:
-							// 잘못된 데이터 유저 차단
-
-							// 보낼 수 있는 상태 인가 ? 종료 
-							if (FD_ISSET(sk, &fdSendSet))
-							{
-								if (copyIter->second->sendQ.GetUseSize() != 0)
-									send(sk, copyIter->second->sendQ.GetFrontBufferPtr(), copyIter->second->sendQ.GetUseSize(), 0);
-							}
-							if (DeleteUser(sk) == false)
-								printf("지워지지 않은 유저가 있습니다. %d\n", sk);
-
-							return;
-						default:
-							printf("잘못된 패킷 처리가 있습니다. recv %d sk %d\n", recvSize, sk);
-							return;
-						}
+						break;
+					default:
+						_LOG(dfLOG_LEVEL_DEBUG, L"잘못된 netProc_Recv return 정의. recv %d sk %d", recvSize, pSession->socket);
+						continue;
+						break;
 					}
 				}
+				int bb = 0;
+			}
 
-				// 보낼께 있는가?
-				if (copyIter->second->sendQ.GetUseSize() < _headerSize)
-					continue;
+			// 보낼께 있는가?
+			if (pSession->sendQ.GetUseSize() < _headerSize)
+				continue;
 
-				// 헤더 복사
-				char tempSendBuf[20000] = "\0";
-				copyIter->second->sendQ.Peek(tempSendBuf, _headerSize);
-				st_PACKET_HEADER header = { 0, };
-				memcpy((char*)&header, tempSendBuf, _headerSize);
+			// 헤더 복사
+			st_PACKET_HEADER header = { 0, };
+			pSession->sendQ.Peek((char*)&header, _headerSize);
 
-				// 패킷의 페이로드 사이즈가 있는지 체크 부족하다면 더 받아야 한다.
-				if (copyIter->second->sendQ.GetUseSize() < header.wPayloadSize + _headerSize)
-				{
-					int a = 0;
-					continue;
-				}
+			// 패킷의 페이로드 사이즈가 있는지 체크 부족하다면 더 받아야 한다.
+			if (pSession->sendQ.GetUseSize() < header.bySize + _headerSize)
+				continue;
 
-				//printf("sendQueue : %d\n", copyIter->second->sendQ.GetUseSize());
-
-				// 보낼 수 있는 상태 인가 ?
-				if (FD_ISSET(sk, &fdSendSet))
-				{
-
-					int sendSizeGo = copyIter->second->sendQ.GetUseSize();
-					char sendBuf[20000] = "\0";
-					copyIter->second->sendQ.Peek(sendBuf, sendSizeGo);
-					st_PACKET_HEADER * headers = (st_PACKET_HEADER*)sendBuf;
-
-					int sendSize = send(sk, sendBuf, sendSizeGo, 0);
-					//printf("send : %d\n", sendSize);
-					copyIter->second->sendQ.MoveFront(sendSize);
-				}
+			// 보낼 수 있는 상태 인가 ?
+			if (FD_ISSET(pSession->socket, pWriteSet))
+			{
+				int sendSize = send(pSession->socket, pSession->sendQ.GetFrontBufferPtr(), pSession->sendQ.GetNotBrokenGetSize(), 0);
+				pSession->sendQ.MoveFront(sendSize);
 			}
 		}
 	}
 	
 }
 
-BOOL Network::DomaionToIP(const WCHAR *szDomain, IN_ADDR *pAddr)
+int Network::netProc_Recv(st_SESSION * pSession)
 {
-	ADDRINFOW * pAddrInfo;
-	SOCKADDR_IN * pSockAddr;
-	if (GetAddrInfo(szDomain, L"0", NULL, &pAddrInfo) != 0)
-	{
-		return FALSE;
-	}
-	pSockAddr = (SOCKADDR_IN*)pAddrInfo->ai_addr;
-	*pAddr = pSockAddr->sin_addr;
-	FreeAddrInfo(pAddrInfo);
-	return TRUE;
+	// 헤더 복사
+	st_PACKET_HEADER header = { 0 };
+
+	pSession->recvQ.Peek((char*)&header, _headerSize);
+
+	// 패킷의 첫 바이트가 0x89인가? 위변조 체크
+	if (header.byCode != 0x89)
+		return RECV_CHECK::RECV_ERROR;
+
+	// 패킷의 페이로드 사이즈가 있는지 체크 부족하다면 더 받아야 한다.
+	if (header.bySize + _headerSize > pSession->recvQ.GetUseSize())
+		return RECV_CHECK::RECV_MORE;
+
+	// 데이타그램 복사
+	char userDataGram[18000];
+	pSession->recvQ.Peek(userDataGram, header.bySize + _headerSize);
+
+	//// 체크썸 체크 체크섬 값,메시지 타입, 페이로드 크기, 버퍼
+	//if (CheckSum(header.byCheckSum, header.bySize, header.bySize, buf_ + _headerSize) == false)
+	//	return RECV_CHECK::RECV_ERROR;
+
+	// 모든 조건이 만족함 패킷을 처리 하면 됨.
+	if (CompleteRecvPacket(header.byType, userDataGram, header.bySize + _headerSize, pSession) == 0)
+		return RECV_CHECK::RECV_ERROR;
+
+	// MovePtr + 패킷 엔드 코드
+	pSession->recvQ.MoveFront(header.bySize + _headerSize + 1);
+
+	++_uiPPS;
+
+	return RECV_CHECK::RECV_OK;
 }
 
-void Network::Accept()
+
+int Network::CompleteRecvPacket(WORD wMsgType_, char * buf_, int bufSize_, st_SESSION * pSession)
 {
+	// 직렬화 초기화
+	_packetSz.Clear();
+
+	//cPacketSerialz packetSz;
+	//packetSz.PutData(buf_ + _headerSize, bufSize_ - _headerSize);
+	_packetSz.PutData(buf_ + _headerSize, bufSize_ - _headerSize);
+	
+	int iProcRet = 1;
+	// 패킷
+	switch (wMsgType_)
+	{
+	case dfPACKET_CS_MOVE_START:
+		iProcRet = netPacketProc_MoveStart(&_packetSz, pSession);
+		break;
+	case dfPACKET_CS_MOVE_STOP:
+		iProcRet = netPacketProc_MoveStop(&_packetSz, pSession);
+		break;
+	case dfPACKET_CS_ATTACK1:
+		iProcRet = netPacketProc_Attack1(&_packetSz, pSession);
+		break;
+	case dfPACKET_CS_ATTACK2:
+		iProcRet = netPacketProc_Attack2(&_packetSz, pSession);
+		break;
+	case dfPACKET_CS_ATTACK3:
+		iProcRet = netPacketProc_Attack3(&_packetSz, pSession);
+		break;
+	case 252:
+		_LOG(dfLOG_LEVEL_DEBUG, L"252Packet");
+		iProcRet = true;
+		break;
+	default:
+		iProcRet = false;
+		break;
+	}
+	return iProcRet;
+}
+
+//
+// 세션 생성
+//
+st_SESSION * Network::CreateSession(SOCKET sk, SOCKADDR_IN sockAddr)
+{
+	// 서버에 유저의 정보를 담는다. 
+	st_SESSION * user = new st_SESSION;
+	user->socket = sk;
+	user->sockAddr = sockAddr;
+	user->dwSessionID = ++g_uiUser;
+	_LOG(dfLOG_LEVEL_DEBUG, L"Accept - ip %S port %d", inet_ntoa(sockAddr.sin_addr), sockAddr.sin_port);
+	_mSessionList.insert(make_pair(sk, user));
+	return user;
+}
+
+//
+//----------------------------------------------------------------
+// Accept 접속 클라이언트 
+//----------------------------------------------------------------
+//
+BOOL Network::netProc_Accept()
+{
+	BOOL bRet = FALSE;
 	FD_SET fdReadSet;
 	FD_ZERO(&fdReadSet);
 
@@ -263,12 +618,10 @@ void Network::Accept()
 	timeval tv;
 	tv.tv_sec = 0;
 	tv.tv_usec = 0;
-	
 	// accept
 	int selectRet = select(NULL, &fdReadSet, NULL, NULL, &tv);
 	if (selectRet > 0)
 	{
-		char buffer[128] = { 0, };
 		// 패킷 처리
 		if (FD_ISSET(_listenSocket, &fdReadSet))
 		{
@@ -277,70 +630,146 @@ void Network::Accept()
 			int clientLen = sizeof(sockAddr);
 			SOCKET client = accept(_listenSocket, (SOCKADDR*)&sockAddr, &clientLen);
 			if (client == INVALID_SOCKET)
+				_LOG(dfLOG_LEVEL_DEBUG, L"INVALID_SOCKET");
+
+			bRet = TRUE;
+
+			st_SESSION * pSession = CreateSession(client, sockAddr);
+			if (pSession != nullptr)
 			{
-				int a = 0;
+				CreateCharacter(pSession);
 			}
-			// 서버에 유저의 정보를 담는다. 
-			st_USER * user = new st_USER;
-			user->socket = client;
-			user->sockAddr = sockAddr;
-			user->isLogin = FALSE;
-			_mUserList.insert(make_pair(client, user));
-			printf("Accept - ip %s port %d\n", inet_ntoa(sockAddr.sin_addr), sockAddr.sin_port);
+			else
+			{
+				_LOG(dfLOG_LEVEL_DEBUG, L"Session Create Error");
+			}
+
 		}
+	}
+	return bRet;
+}
+
+st_SESSION * Network::FindSession(SOCKET sk)
+{
+	auto iter = _mSessionList.find(sk);
+	if (iter != _mSessionList.end())
+	{
+		return iter->second;
+	}
+	return nullptr;
+}
+
+// 소켓 번호로 세션에 매핑된 케릭터를 찾음
+st_CHARACTER * Network::FindCharacter(st_SESSION * session)
+{
+	auto iter = _mCharList.find(session->socket);
+	if (iter != _mCharList.end())
+	{
+		return iter->second;
+	}
+	return nullptr;
+}
+
+//
+//----------------------------------------------------------------
+// 캐릭터 생성 및 기타 
+//----------------------------------------------------------------
+//
+void Network::CreateCharacter(st_SESSION * pSession)
+{
+	_packetSz.Clear();
+
+	// 케릭터 생성 후 맵에 저장
+	// 메이크패킷으로 다시 돌려줌 
+	// 상대방에서도 새로들어온 녀석의 정보를 생성하라는 메이크패킷 생성 브로드 캐스팅
+	st_CHARACTER * character = new st_CHARACTER;
+	ZeroMemory(character, 0, sizeof(character));
+	character->dwClientNo = pSession->dwSessionID;
+	character->byDirection = 0;
+	//character->iX = 50 + pSession->dwSessionID * 10;
+	//character->iY = 50 + pSession->dwSessionID * 10;
+	character->iX = rand() % dfRANGE_MOVE_RIGHT + 1;
+	character->iY = rand() % dfRANGE_MOVE_BOTTOM + 1;
+	character->byHp = 100;
+	character->dwAction = dfPACKET_SC_MOVE_STOP;
+	character->curSector.iX = -1;
+	character->curSector.iY = -1;
+	character->oldSector.iX = -1;
+	character->oldSector.iY = -1;
+	character->pSession = pSession;
+	character->byArrowDirection = 0;
+
+	// 내 케릭터 생성
+	MakePacket_CreateMyCharacter(&_packetSz, character->dwClientNo, character->byDirection, character->iX, character->iY, character->byHp);
+	pSession->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
+
+	_packetSz.Clear();
+
+	// 내케릭터 정보는 지금 저장
+	_mCharList.insert(make_pair(pSession->socket, character));
+
+	// 섹터 추가
+	if (Sector_UpdateCharacter(character))
+	{
+		CharacterSectorUpdatePacket(character);
 	}
 }
 
-int Network::PacketProc(char * buf_, unsigned int size_, UINT sk_)
+//
+//----------------------------------------------------------------
+// 캐릭터 삭제
+//----------------------------------------------------------------
+//
+
+void Network::DeleteCharacter(DWORD id)
 {
-	// 헤더 사이즈 확인
-	if (size_ < _headerSize)
-		return RECV_CHECK::RECV_MORE;
-
-	// 헤더 복사
-	st_PACKET_HEADER header = { 0, };
-	memcpy((char*)&header, buf_, _headerSize);
-
-	// 패킷의 첫 바이트가 0x89인가? 위변조 체크
-	if (header.byCode != 0x89)
-		return RECV_CHECK::RECV_ERROR;
-
-	// 패킷의 페이로드 사이즈가 있는지 체크 부족하다면 더 받아야 한다.
-	if (header.wPayloadSize > size_)
-		return RECV_CHECK::RECV_MORE;
-
-	//// 체크썸 체크 체크섬 값,메시지 타입, 페이로드 크기, 버퍼
-	//if (CheckSum(header.byCheckSum, header.wMsgType, header.wPayloadSize, buf_ + _headerSize) == false)
-	//	return RECV_CHECK::RECV_ERROR;
-
-	// 모든 조건이 만족함 패킷을 처리 하면 됨.
-	if (PacketTypeProc(header.wMsgType, buf_ + _headerSize, sk_) == false)
-		return RECV_CHECK::RECV_ERROR;
-
-	// MovePtr
-	_mUserList[sk_]->recvQ.MoveFront(header.wPayloadSize + _headerSize);
-
-	_uiPPS++;
-
-	return RECV_CHECK::RECV_OK;
+	_packetSz.Clear();
+	MakePacket_DeleteOtherCharacter(&_packetSz, id);
+	SendOther(_packetSz.GetBufferPtr(), _packetSz.GetDataSize(), id);
 }
 
+//
+//----------------------------------------------------------------
+// 클라이언트 접속 해제
+//----------------------------------------------------------------
+//
 
-BOOL Network::DeleteUser(UINT sk_)
+BOOL Network::DisconnectSession(SOCKET sk_)
 {
-	for (auto iter = _mUserList.begin(); iter != _mUserList.end(); ++iter)
+	for (auto iter = _mSessionList.begin(); iter != _mSessionList.end(); ++iter)
 	{
 		if (iter->first == sk_)
 		{
+			_LOG(dfLOG_LEVEL_DEBUG, L"Disconnected - ip %S port %d", inet_ntoa(_mSessionList[sk_]->sockAddr.sin_addr), _mSessionList[sk_]->sockAddr.sin_port);
+
+			cPacketSerialz packetDelete;
+			// 1.RemoveSector 에 캐릭터 삭제 패킷 보내기
+			MakePacket_DeleteOtherCharacter(&packetDelete, _mCharList[sk_]->dwClientNo);
+
+			// 주변에게 제거 패킷
+			SendPacket_Around(_mSessionList[sk_], &packetDelete);
+			
+			// 섹터 제거
+			Sector_RemoveCharacter(_mCharList[sk_]);
+
 			closesocket(sk_);
-			delete _mUserList[sk_];
-			_mUserList.erase(sk_);
-			printf("Free Done : %d\n", sk_);
+			delete _mSessionList[sk_];
+			_mSessionList.erase(sk_);
+			
+			delete _mCharList[sk_];
+			_mCharList.erase(sk_);
+
 			return TRUE;
 		}
 	}
 	return FALSE;
 }
+
+//
+//----------------------------------------------------------------
+// 체크섬 사용하지 않음
+//----------------------------------------------------------------
+//
 
 BOOL Network::CheckSum(int checkVal_, WORD wMsgType_, int payLoadSize_, char * payLoadBuf_)
 {
@@ -360,648 +789,318 @@ BOOL Network::CheckSum(int checkVal_, WORD wMsgType_, int payLoadSize_, char * p
 	return FALSE;
 }
 
-BOOL Network::PacketTypeProc(WORD wMsgType_, char * buf_, UINT sk_)
-{
-	// 직렬화 초기화
-	_packetSz.Clear();
-
-	BOOL bProcRet = true;
-	// 패킷
-	switch (wMsgType_)
-	{
-	case df_REQ_ACCOUNT_ADD:
-		bProcRet = Packet_ReqAddAccount(buf_, sk_);
-		break;
-	case df_REQ_LOGIN:
-		bProcRet = Packet_ReqLogin(buf_, sk_);
-		break;
-	case df_REQ_ACCOUNT_LIST:
-		bProcRet = Packet_ReqAccountList(buf_, sk_);
-		break;
-	case df_REQ_FRIEND_REQUEST:
-		bProcRet = Packet_ReqFriendRequest(buf_, sk_);
-		break;
-	case df_REQ_FRIEND_REPLY_LIST:
-		bProcRet = Packet_ReqFriendReplyList(buf_, sk_);
-		break;
-	case df_REQ_FRIEND_REQUEST_LIST:
-		bProcRet = Packet_ReqFriendRequestList(buf_, sk_);
-		break;
-	case df_REQ_FRIEND_AGREE:
-		bProcRet = Packet_ResFriendAgree(buf_, sk_);
-		break;
-	case df_REQ_FRIEND_DENY:
-		bProcRet = Packet_ReqFriendDeny(buf_, sk_);
-		break;
-	case df_REQ_FRIEND_LIST:
-		bProcRet = Packet_ReqFriendList(buf_, sk_);
-		break;
-	case df_REQ_FRIEND_REMOVE:
-		bProcRet = Packet_ReqFriendRemove(buf_, sk_);
-		break;
-	case df_REQ_STRESS_ECHO:
-		bProcRet = Packet_StressTest(buf_, sk_);
-		break;
-	default:
-		bProcRet = false;
-		break;
-	}
-	return bProcRet;
-}
-
-void Network::SaveJSON()
-{
-
-	StringBuffer StringJSON;
-	Writer<StringBuffer, UTF16<>> writer(StringJSON);
-
-	writer.StartObject();	// {
-	writer.String(L"Account");
-	writer.StartArray();
-	// 계정 정보 저장
-	for (auto iter = _mAccountList.begin(); iter != _mAccountList.end(); ++iter)
-	{
-		writer.StartObject();
-		writer.String(L"AccountNo");
-		writer.Uint64(iter->first);
-		writer.String(L"Nickname");
-		writer.String(iter->second.nikName);
-		writer.EndObject();
-	}
-	writer.EndArray();
-
-	writer.String(L"Friend");
-	writer.StartArray();
-	// 친구 정보 저장
-	for (auto iter = _mFriendList.begin(); iter != _mFriendList.end(); ++iter)
-	{
-		writer.StartObject();
-		writer.String(L"friendFrom");
-		writer.Uint64(iter->first);
-		writer.String(L"friendTo");
-		writer.Uint64(iter->second);
-		writer.EndObject();
-	}
-	writer.EndArray();
-
-	writer.String(L"FriendRes");
-	writer.StartArray();
-	// 친구 요청 받은 
-	for (auto iter = _mFriendResList.begin(); iter != _mFriendResList.end(); ++iter)
-	{
-		writer.StartObject();
-		writer.String(L"friendResFrom");
-		writer.Uint64(iter->first);
-		writer.String(L"friendResTo");
-		writer.Uint64(iter->second);
-		writer.EndObject();
-	}
-	writer.EndArray();
-
-	writer.String(L"FriendReq");
-	writer.StartArray();
-	// 친구 요청 한
-	for (auto iter = _mFriendReqList.begin(); iter != _mFriendReqList.end(); ++iter)
-	{
-		writer.StartObject();
-		writer.String(L"friendReqFrom");
-		writer.Uint64(iter->first);
-		writer.String(L"friendReqTo");
-		writer.Uint64(iter->second);
-		writer.EndObject();
-	}
-	writer.EndArray();
-
-	writer.EndObject();		// }
-
-	const char * pjson = StringJSON.GetString();
-
-	FILE *fp;
-	fopen_s(&fp, "saveJSON.txt", "w");
-	fwrite(pjson, strlen(pjson), 1, fp);
-	fclose(fp);
-
-}
-
-void Network::LoadJSON()
-{
-	char buf[2048] = { 0, };
-	FILE *fp;
-	fopen_s(&fp, "saveJSON.txt", "r");
-	if (fp == NULL)
-		return;
-	int redn = fread(buf, sizeof(buf), 1, fp);
-	fclose(fp);
-
-	Document Doc;
-	Doc.Parse(buf);
-
-	UINT64 AccountNo;
-	WCHAR szNickname[dfNICK_MAX_LEN];
-	Value &AccountArray = Doc["Account"];
-	for (SizeType i = 0; i < AccountArray.Size(); i++)
-	{
-		Value &AccountObject = AccountArray[i];
-		AccountNo = AccountObject["AccountNo"].GetUint64();
-		UTF8toUTF16(AccountObject["Nickname"].GetString(), szNickname, dfNICK_MAX_LEN);
-		++g_uiUser;
-
-		st_ACCOUNT acut;
-		memcpy(acut.nikName, szNickname, dfNICK_MAX_LEN * 2);
-		UINT64 accountNo = AccountNo;
-		_mAccountList.insert(make_pair(accountNo, acut));
-	}
-
-	AccountArray = Doc["Friend"];
-	for (SizeType i = 0; i < AccountArray.Size(); i++)
-	{
-		Value &AccountObject = AccountArray[i];
-		
-		UINT64 fromNo = AccountObject["friendFrom"].GetUint64();
-		UINT64 toNo = AccountObject["friendTo"].GetUint64();
-
-		_mFriendList.insert(make_pair(fromNo, toNo));
-	}
-	
-	AccountArray = Doc["FriendRes"];
-	for (SizeType i = 0; i < AccountArray.Size(); i++)
-	{
-		Value &AccountObject = AccountArray[i];
-
-		UINT64 fromNo = AccountObject["friendResFrom"].GetUint64();
-		UINT64 toNo = AccountObject["friendResTo"].GetUint64();
-
-		_mFriendResList.insert(make_pair(fromNo, toNo));
-	}
-
-	AccountArray = Doc["FriendReq"];
-	for (SizeType i = 0; i < AccountArray.Size(); i++)
-	{
-		Value &AccountObject = AccountArray[i];
-
-		UINT64 fromNo = AccountObject["friendReqFrom"].GetUint64();
-		UINT64 toNo = AccountObject["friendReqTo"].GetUint64();
-
-		_mFriendReqList.insert(make_pair(fromNo, toNo));
-	}
-	int a = 0;
-}
-
-bool Network::UTF8toUTF16(const char * szText, WCHAR * szBuff, int iBuffLen)
-{
-	int iRe = MultiByteToWideChar(CP_UTF8, 0, szText, strlen(szText), szBuff, iBuffLen);
-	if (iRe < iBuffLen)
-		szBuff[iRe] = L'\0';
-	return true;
-}
+//------------------------------------------------------------------------
+//
+// SendPacket ------------------------------------------------------
+//
+//------------------------------------------------------------------------
+//
 
 void Network::SendAll(char * buf, int size)
 {
-	for(auto iter = _mUserList.begin(); iter != _mUserList.end(); ++iter)
-		_mUserList[iter->first]->sendQ.Enqueue(buf, size);
+	return;
+	for(auto iter = _mSessionList.begin(); iter != _mSessionList.end(); ++iter)
+		_mSessionList[iter->first]->sendQ.Enqueue(buf, size);
 }
 
 void Network::SendOther(char * buf, int size, UINT sk)
 {
-	for (auto iter = _mUserList.begin(); iter != _mUserList.end(); ++iter)
+	return;
+	for (auto iter = _mSessionList.begin(); iter != _mSessionList.end(); ++iter)
 	{
 		if (iter->first == sk)
 			continue;
 		
-		_mUserList[iter->first]->sendQ.Enqueue(buf, size);
+		_mSessionList[iter->first]->sendQ.Enqueue(buf, size);
 	}
 }
 
-//
-// 회원가입
-//
-BOOL Network::Packet_ReqAddAccount(char * buf, UINT sk)
+void Network::SendPacket_SectorOne(int iX, int iY, cPacketSerialz * packetSz, st_SESSION * pExceptSession)
 {
-	st_ACCOUNT acut;
-	memcpy(acut.nikName, buf, dfNICK_MAX_LEN * 2);
-	UINT64 accountNo = ++g_uiUser;
-	_mAccountList.insert(make_pair(accountNo, acut));
+	list<st_CHARACTER * > *pSectorList;
+	list<st_CHARACTER *>::iterator ListIter;
+	pSectorList = &g_Sector[iY][iX];
 
-	// Res
-	MakePacket_ResAddAcount(&_packetSz, accountNo);
-	_mUserList[sk]->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
-	return TRUE;
+	// 해당 섹터마다 등록된 캐릭터들을 뽑아서 생선패킷 만들어 보냄
+	for (ListIter = pSectorList->begin(); ListIter != pSectorList->end(); ListIter++)
+	{
+		if ((*ListIter)->pSession == pExceptSession)
+			continue;
+		(*ListIter)->pSession->sendQ.Enqueue(packetSz->GetBufferPtr(), packetSz->GetDataSize());
+	}
 }
 
-//
-// 로그인 요청
-//
-BOOL Network::Packet_ReqLogin(char * buf, UINT sk)
+void Network::SendPacket_Unicast(st_SESSION * pSession, cPacketSerialz * packetSz)
 {
-	bool bRet = false;
-	WCHAR * wNick = NULL;
-	UINT64 accountNo = (UINT64)*buf;
-	if (accountNo == 0)
-		return FALSE;
+	pSession->sendQ.Enqueue(packetSz->GetBufferPtr(), packetSz->GetDataSize());
+}
 
-	for (auto iter = _mAccountList.begin(); iter != _mAccountList.end(); ++iter)
+void Network::SendPacket_Around(st_SESSION * pSession, cPacketSerialz * packetSz, bool bSendMe)
+{
+	list<st_CHARACTER * > *pSectorList;
+	list<st_CHARACTER *>::iterator ListIter;
+	st_SECTOR_AROUND CurSectorAround;
+
+	st_CHARACTER * character = _mCharList[pSession->socket];
+	GetSectorAround(character->curSector.iX, character->curSector.iY, &CurSectorAround);
+
+	for (int i = 0; i < CurSectorAround.iCount; ++i)
 	{
-		// 회원 번호와 같은게 있는지 
-		if (iter->first == accountNo)
+		pSectorList = &g_Sector[CurSectorAround.around[i].iY][CurSectorAround.around[i].iX];
+
+		// 섹터에 인원이 없으면 리턴
+		if (pSectorList->size() == 0)
+			continue;
+
+		for (ListIter = pSectorList->begin(); ListIter != pSectorList->end(); ListIter++)
 		{
-			wNick = iter->second.nikName;
-			bRet = true;
-			_mUserList[sk]->accountNo = accountNo;
-			_mUserList[sk]->isLogin = TRUE;
-			break;
-		}
-	}
-
-	if (!bRet)
-		accountNo = 0;
-
-	MakePacket_ResLogin(&_packetSz, accountNo, wNick);
-	_mUserList[sk]->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
-	return TRUE;
-}
-
-BOOL Network::Packet_ReqAccountList(char * buf, UINT sk)
-{
-	cPacketSerialz packetPayLoad;
-
-	packetPayLoad << _mAccountList.size();
-	for (auto iter = _mAccountList.begin(); iter != _mAccountList.end(); ++iter)
-	{
-		packetPayLoad << iter->first;
-		packetPayLoad.PutData((char*)iter->second.nikName, dfNICK_MAX_LEN * 2);
-	}
-
-	MakePacket_ResAccountList(&_packetSz, &packetPayLoad);
-	_mUserList[sk]->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
-
-	return TRUE;
-}
-
-BOOL Network::Packet_ReqFriendRequest(char * buf, UINT sk)
-{
-	if (_mUserList[sk]->isLogin == FALSE)
-	{
-		printf("Not Logged in\n");
-		return FALSE;
-	}
-	// 친구 요청
-	UINT64 accountNo = (UINT64)*buf;
-	BYTE btResult = 0;
-
-	//accountNo이 번호가 회원 목록에 있는지 검사
-	auto iter = _mAccountList.find(accountNo);
-
-	// 로그인이 되어 있어야 하고, 로그인이 되어 잇으면 accountNo가 있다. 자기 자신을 친추 하려고할때
-	if (_mUserList[sk]->accountNo == 0 || _mUserList[sk]->accountNo == accountNo || iter == _mAccountList.end())
-	{
-		btResult = df_RESULT_FRIEND_REQUEST_NOTFOUND;
-		printf("잘못된 no : %d\n",accountNo);
-	}
-	else
-	{
-		//_mFriendReqLists는 친구요청 목록이 들어 가 있음.
-		BOOL bRet = FALSE;
-		//내 '요청한 친구 목록에' 내가 존재 하는지 검사
-		auto reqFriend = _mFriendReqList.equal_range(accountNo);
-		for (auto iter = reqFriend.first; iter != reqFriend.second; ++iter)
-		{
-			if (iter->second == _mUserList[sk]->accountNo)
+			if (bSendMe == false)
 			{
-				// 불발 상황
-				bRet = TRUE;
-				btResult = df_RESULT_FRIEND_REQUEST_NOTFOUND;
-				printf("요청한 친구 목록에 내가 존재\n");
-				break;
+				if ((*ListIter)->pSession == pSession)
+					continue;
 			}
-		}
 
-		if (bRet == FALSE)
-		{
-			// 나의 요청 리스트에 이미 있는지 검사
-			auto reqFriend = _mFriendReqList.equal_range(_mUserList[sk]->accountNo);
-			for (auto iter = reqFriend.first; iter != reqFriend.second; ++iter)
-			{
-				if (iter->second == accountNo)
-				{
-					// 불발 상황
-					bRet = TRUE;
-					btResult = df_RESULT_FRIEND_REQUEST_NOTFOUND;
-					printf("내가 요청한 친구 목록에 상대가 이미 존재\n");
-					break;
-				}
-			}
+			(*ListIter)->pSession->sendQ.Enqueue(packetSz->GetBufferPtr(), packetSz->GetDataSize());
 		}
-
-		if (bRet == FALSE)
-		{
-			// 내 친구 목록에도 중복 되지 않았으면 이제 등록 하기 전에 임 서로 친구 인지 확인
-			// _mFriendList 여기에는 A->B B->A 를 이렇게 되어 있음. 
-			//_mFriendList 에서 A키값을 찾아서 A의 벨류가 B가 있는지 검사 없으면 그때 등록
-			auto range = _mFriendList.equal_range(_mUserList[sk]->accountNo);
-			for (auto iter = range.first; iter != range.second; ++iter)
-			{
-				// 내가 친구목록 중에 등록하려는 애가 있다면
-				if (iter->second == accountNo)
-				{
-					// 불발 상황
-					bRet = TRUE;
-					btResult = df_RESULT_FRIEND_REQUEST_NOTFOUND;
-					printf("서로 친구 사이\n");
-				}
-			}
-		}
-
-		if (btResult == FALSE)
-		{
-			// 등록
-			btResult = df_RESULT_FRIEND_REQUEST_OK;
-			// 로그인한 어카운트가 요청하려는 친구의 어카운트로 등록
-			// Req
-			_mFriendReqList.insert(make_pair(_mUserList[sk]->accountNo, accountNo));
-			// Res
-			_mFriendResList.insert(make_pair(accountNo, _mUserList[sk]->accountNo));
-			printf("등록\n");
-		}
-
+		
 	}
-
-
-	st_PACKET_HEADER header;
-	_packetSz.PutData((char*)&header, _headerSize);
-	_packetSz << _mUserList[sk]->accountNo << btResult;
-	MakePacket_ResFriendRequest(&_packetSz);
-	_mUserList[sk]->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
-
-	return TRUE;
 }
 
-BOOL Network::Packet_ReqFriendReplyList(char * buf, UINT sk)
+void Network::SendPacket_Broadcast(st_SESSION * pSession, cPacketSerialz * packetSz)
 {
-	if (_mUserList[sk]->isLogin == FALSE)
-	{
-		printf("Not Logged in\n");
-		return FALSE;
-	}
-	// 친구 요청한 목록 리스트
-	// 의 친구 목록을 찾아서 해당 목록을 보내준다.
-	st_PACKET_HEADER header = { 0, };
-	_packetSz << header;
-
-	auto range = _mFriendResList.equal_range(_mUserList[sk]->accountNo);
-	UINT count = 0;
-	_packetSz << count;
-
-	for (auto iter = range.first; iter != range.second; ++iter) 
-	{
-		// 요청 받은 친구 번호
-		_packetSz << iter->second;
-		_packetSz.PutData((char*)_mAccountList[iter->second].nikName, dfNICK_MAX_LEN * 2);
-		count++;
-	}
-
-	MakePacket_ResFriendReplyList(&_packetSz, count);
-	_mUserList[sk]->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
-	return TRUE;
 }
 
-BOOL Network::Packet_ReqFriendRequestList(char * buf, UINT sk)
+
+//------------------------------------------------------------------------
+//
+// Content ------------------------------------------------------
+//
+//------------------------------------------------------------------------
+//
+
+
+// 어떤 케릭터가 어떤 방향으로 이동을 시작함
+int Network::netPacketProc_MoveStart(cPacketSerialz * packetSz, st_SESSION * pSession)
 {
-	if (_mUserList[sk]->isLogin == FALSE)
+	st_CHARACTER * pCharacter = FindCharacter(pSession);
+	if (pCharacter == NULL)
 	{
-		printf("Not Logged in\n");
-		return FALSE;
-	}
-	st_PACKET_HEADER header = { 0, };
-	_packetSz << header;
-
-	auto range = _mFriendReqList.equal_range(_mUserList[sk]->accountNo);
-	UINT count = 0;
-	_packetSz << count;
-
-	for (auto iter = range.first; iter != range.second; ++iter)
-	{
-		// 요청 받은 친구 번호
-		_packetSz << iter->second;
-		_packetSz.PutData((char*)_mAccountList[iter->second].nikName, dfNICK_MAX_LEN * 2);
-		count++;
+		_LOG(dfLOG_LEVEL_ERROR, L"MoveStart Error Character Not Found! Critical Error SessionID : %d", pSession->dwSessionID);
+		return 0;
 	}
 
-	MakePacket_ResFriendRequestList(&_packetSz, count);
-	_mUserList[sk]->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
-	return TRUE;
+	// 방향과, X,Y만 넘어옴.
+	BYTE byDir;
+	WORD x;
+	WORD y;
+
+	*packetSz >> byDir >> x >> y;
+	packetSz->Clear();
+	//_LOG(dfLOG_LEVEL_DEBUG, L"# MOVESTART # SessionID:%d / Direction:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, x, y);
+
+	// 서버의 위치와 받은 패킷의 위치값이 너무 큰차이가 나며 데드 레커닝으로 재위치 확인. MMORPG에서는 무조건 서버 좌표가 맞다.
+	// 좌표가 다르면 싱크 패킷을 보내어 좌표 보정.
+
+	if (abs(x - pCharacter->iX) > dfERROR_RANG || abs(y - pCharacter->iY) > dfERROR_RANG)
+	{
+		WORD wdrX, wdrY;
+		int iDeadFrame = DeadReckoningPos(	pCharacter->byDirection,
+											pCharacter->dwActionTick,
+											pCharacter->iActionX,
+											pCharacter->iActionY,
+											wdrX, wdrY);
+
+		// 서버측 수정된 좌표로 보정
+		// 클라의 봐표랑 데드레커닝한 좌표랑 너무 틀리면 데드 레커닝 좌표로 클라를 조절 씬 패킷 날린다. 
+		if (abs(wdrX - x) > dfERROR_RANG || abs(wdrY - y) > dfERROR_RANG)
+		{
+			// 씬 패킷을 수정된 x,y 로 자신에게 날림
+			MakePacket_Syne(packetSz, pCharacter->dwClientNo, wdrX, wdrY);
+			pSession->sendQ.Enqueue(packetSz->GetBufferPtr(), packetSz->GetDataSize());
+			_LOG(dfLOG_LEVEL_DEBUG, L"# SYNE # SessionID:%d / Direction:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, wdrX, wdrY);
+		}
+
+		// 실제 좌표
+		x = wdrX;
+		y = wdrY;
+	}
+
+	// Sector
+	if (Sector_UpdateCharacter(pCharacter))
+	{
+		// 섹터가 변경된 경우는 클라이언트 관련 정보를 쏜다. 
+		CharacterSectorUpdatePacket(pCharacter);
+	}
+
+	pCharacter->dwActionTick = GetTickCount();
+	pCharacter->byDirection = byDir;
+	pCharacter->dwAction = dfPACKET_SC_MOVE_START;
+	pCharacter->iX = x;
+	pCharacter->iY = y;
+	pCharacter->iActionX = x;
+	pCharacter->iActionY = y;
+
+	packetSz->Clear();
+
+	// 다른 케릭터한테도 걔가 이동했다고 알려줘야 한다.
+	MakePacket_MoveOtherCharacter(packetSz, pCharacter->dwClientNo, byDir, x, y);
+	SendPacket_Around(pSession, packetSz);
+
+	return 1;
 }
 
-BOOL Network::Packet_ResFriendAgree(char * buf, UINT sk)
+int Network::netPacketProc_MoveStop(cPacketSerialz * packetSz, st_SESSION * pSession)
 {
-	if (_mUserList[sk]->isLogin == FALSE)
-	{
-		printf("Not Logged in\n");
-		return FALSE;
-	}
-	// 친구요청 수락 결과
-	// 내가 B가 인데 A한테 친구 요청을 받았는데 수락을 하겠다 
-	
-	UINT64 accountNo = (UINT64)*buf;
-	BYTE bRet = 0;
-	auto range = _mFriendResList.equal_range(_mUserList[sk]->accountNo);
+	st_CHARACTER * pCharacter = FindCharacter(pSession);
+	if (pCharacter == NULL)
+		return 0;
 
-	// 친구 요청 받은 리스트에서 nufno값 찾기
-	for (auto iter = range.first; iter != range.second; ++iter)
+	// 방향과, X,Y만 넘어옴.
+	BYTE byDir;
+	WORD x;
+	WORD y;
+
+	*packetSz >> byDir >> x >> y;
+	packetSz->Clear();
+	//_LOG(dfLOG_LEVEL_DEBUG, L"# MOVESTOP # SessionID:%d / Direction:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, x, y);
+
+	// 서버의 위치와 받은 패킷의 위치값이 너무 큰차이가 나며 데드 레커닝으로 재위치 확인. MMORPG에서는 무조건 서버 좌표가 맞다.
+	// 좌표가 다르면 싱크 패킷을 보내어 좌표 보정.
+	if (abs(x - pCharacter->iX) > dfERROR_RANG || abs(y - pCharacter->iY) > dfERROR_RANG)
 	{
-		if (iter->second == accountNo)
+		WORD wdrX, wdrY;
+		int iDeadFrame = DeadReckoningPos(pCharacter->byDirection,
+			pCharacter->dwActionTick,
+			pCharacter->iActionX,
+			pCharacter->iActionY,
+			wdrX, wdrY);
+
+		// 서버측 수정된 좌표로 보정
+		// 클라의 봐표랑 데드레커닝한 좌표랑 너무 틀리면 데드 레커닝 좌표로 클라를 조절 씬 패킷 날린다. 
+		if (abs(wdrX - x) > dfERROR_RANG || abs(wdrY - y) > dfERROR_RANG)
 		{
-			bRet = df_RESULT_FRIEND_AGREE_OK;
-			_mFriendResList.erase(iter);
-			break;
+			// 씬 패킷을 수정된 x,y 로 자신에게 날림
+			MakePacket_Syne(packetSz, pCharacter->dwClientNo, wdrX, wdrY);
+			pSession->sendQ.Enqueue(packetSz->GetBufferPtr(), packetSz->GetDataSize());
+			_LOG(dfLOG_LEVEL_DEBUG, L"# SYNE # SessionID:%d / Direction:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, wdrX, wdrY);
 		}
-	}
-	
-	// 친구 요청한 리스트에서 찾음
-	auto rangeReq = _mFriendReqList.equal_range(accountNo);
-	for (auto iter = rangeReq.first; iter != rangeReq.second; ++iter)
-	{
-		if (iter->second == _mUserList[sk]->accountNo)
-		{
-			_mFriendReqList.erase(iter);
-			break;
-		}
-	}
-	
-	if (bRet == 0)
-	{
-		bRet = df_RESULT_FRIEND_AGREE_FAIL;
-	}
-	else
-	{
-		// 있다면 친구 목록 리스트에 둘다 넣고, 요청 받은 리스트에서 삭제
-		// A->B
-		_mFriendList.insert(make_pair(_mUserList[sk]->accountNo, accountNo));
-		// B->A
-		_mFriendList.insert(make_pair(accountNo, _mUserList[sk]->accountNo));
-	}
-	st_PACKET_HEADER header = { 0, };
-	_packetSz << header;
 
-	MakePacket_ResFriendAgree(&_packetSz, accountNo, bRet);
-	_mUserList[sk]->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
+		// 실제 좌표
+		x = wdrX;
+		y = wdrY;
+	}
 
-	return TRUE;
+	// Sector
+	if (Sector_UpdateCharacter(pCharacter))
+	{
+		// 섹터가 변경된 경우는 클라이언트 관련 정보를 쏜다. 
+		CharacterSectorUpdatePacket(pCharacter);
+	}
+	//_LOG(dfLOG_LEVEL_DEBUG, L"# MOVESTOP # SessionID:%d / Direction:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, x, y);
+	pCharacter->dwActionTick = GetTickCount();
+	pCharacter->byDirection = byDir;
+	pCharacter->dwAction = dfPACKET_SC_MOVE_STOP;
+	pCharacter->iX = x;
+	pCharacter->iY = y;
+	pCharacter->iActionX = x;
+	pCharacter->iActionY = y;
+
+	packetSz->Clear();
+
+	// 다른 케릭터한테도 걔가 이동했다고 알려줘야 한다.
+	MakePacket_MoveStopOtherCharacter(packetSz, pCharacter->dwClientNo, byDir, x, y);
+	SendPacket_Around(pSession, packetSz);
+
+	return 1;
 }
 
-BOOL Network::Packet_ReqFriendDeny(char * buf, UINT sk)
+int Network::netPacketProc_Attack1(cPacketSerialz * packetSz, st_SESSION * pSession)
 {
-	if (_mUserList[sk]->isLogin == FALSE)
-	{
-		printf("Not Logged in\n");
-		return FALSE;
-	}
-	UINT64 accountNo = (UINT64)*buf;
-	BYTE bRet = 0;
-	auto range = _mFriendResList.equal_range(_mUserList[sk]->accountNo);
+	// 어느 방향으로 어디 위치에서 공격이 날아옴.
+	st_CHARACTER * pCharacter = FindCharacter(pSession);
+	if (pCharacter == NULL)
+		return 0;
 
-	// 친구 요청 받은 리스트에서 nufno값 찾기
-	for (auto iter = range.first; iter != range.second; ++iter)
-	{
-		if (iter->second == accountNo)
-		{
-			bRet = df_RESULT_FRIEND_DENY_OK;
-			_mFriendResList.erase(iter);
-			break;
-		}
-	}
+	// 방향과, X,Y만 넘어옴.
+	BYTE btDir = 0;
+	WORD x = 0;
+	WORD y = 0;
+	*packetSz >> btDir >> x >> y;
 
-	// 친구 요청한 리스트에서 찾음
-	auto rangeReq = _mFriendReqList.equal_range(accountNo);
-	for (auto iter = rangeReq.first; iter != rangeReq.second; ++iter)
-	{
-		if (iter->second == _mUserList[sk]->accountNo)
-		{
-			_mFriendReqList.erase(iter);
-			break;
-		}
-	}
+	pCharacter->dwActionTick = GetTickCount();
+	pCharacter->dwAction = dfPACKET_SC_ATTACK1;
+	pCharacter->iX = x;
+	pCharacter->iY = y;
+	pCharacter->iActionX = x;
+	pCharacter->iActionY = y;
 
-	if (bRet == 0)
-	{
-		bRet = df_RESULT_FRIEND_DENY_FAIL;
-	}
+	packetSz->Clear();
 
-	st_PACKET_HEADER header = { 0, };
-	_packetSz << header;
+	MakePacket_ATTACK1(packetSz, pCharacter->dwClientNo, btDir, x, y);
+	SendPacket_Around(pSession, packetSz);
 
-	MakePacket_ResFriendDeny(&_packetSz, accountNo, bRet);
-	_mUserList[sk]->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
+	// 공격 검사
+	DamageHitAround(pSession, 1);
 
-	return TRUE;
+	return 1;
 }
 
-BOOL Network::Packet_ReqFriendList(char * buf, UINT sk)
+int Network::netPacketProc_Attack2(cPacketSerialz * packetSz, st_SESSION * pSession)
 {
-	if (_mUserList[sk]->isLogin == FALSE)
-	{
-		printf("Not Logged in\n");
-		return FALSE;
-	}
-	st_PACKET_HEADER header = { 0, };
-	_packetSz << header;
+	st_CHARACTER * pCharacter = FindCharacter(pSession);
+	if (pCharacter == NULL)
+		return 0;
 
-	auto range = _mFriendList.equal_range(_mUserList[sk]->accountNo);
-	UINT count = 0;
-	_packetSz << count;
+	// 방향과, X,Y만 넘어옴.
+	BYTE btDir = 0;
+	WORD x = 0;
+	WORD y = 0;
+	*packetSz >> btDir >> x >> y;
 
-	for (auto iter = range.first; iter != range.second; ++iter)
-	{
-		// 내 친구 목록
-		_packetSz << iter->second;
-		_packetSz.PutData((char*)_mAccountList[iter->second].nikName, dfNICK_MAX_LEN * 2);
-		count++;
-	}
+	pCharacter->dwActionTick = GetTickCount();
+	pCharacter->dwAction = dfPACKET_SC_ATTACK2;
+	pCharacter->iX = x;
+	pCharacter->iY = y;
+	pCharacter->iActionX = x;
+	pCharacter->iActionY = y;
 
-	MakePacket_ResFriendList(&_packetSz, count);
-	_mUserList[sk]->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
+	packetSz->Clear();
 
-	return TRUE;
+	MakePacket_ATTACK2(packetSz, pCharacter->dwClientNo, btDir, x, y);
+	SendPacket_Around(pSession, packetSz);
+
+	// 공격 검사
+	DamageHitAround(pSession, 3);
+
+	return 1;
 }
 
-BOOL Network::Packet_ReqFriendRemove(char * buf, UINT sk)
+int Network::netPacketProc_Attack3(cPacketSerialz * packetSz, st_SESSION * pSession)
 {
-	if (_mUserList[sk]->isLogin == FALSE)
-	{
-		printf("Not Logged in\n");
-		return FALSE;
-	}
-	// 친구 관계 끊기
+	st_CHARACTER * pCharacter = FindCharacter(pSession);
+	if (pCharacter == NULL)
+		return 0;
 
-	UINT64 accountNo = (UINT64)*buf;
-	BYTE bRet = 0;
+	// 방향과, X,Y만 넘어옴.
+	BYTE btDir = 0;
+	WORD x = 0;
+	WORD y = 0;
+	*packetSz >> btDir >> x >> y;
 
-	// 친구목록에서 accountNo 제거
-	auto range = _mFriendList.equal_range(_mUserList[sk]->accountNo);
-	for (auto iter = range.first; iter != range.second; ++iter)
-	{
-		if (iter->second == accountNo)
-		{
-			bRet = df_RESULT_FRIEND_REMOVE_OK;
-			_mFriendList.erase(iter);
-			break;
-		}
-	}
-	
-	if (bRet == 0)
-	{
-		bRet = df_RESULT_FRIEND_REMOVE_OK;
-		printf("Friend Remove Fail Not FriendNo : %d\n", accountNo);
-	}
-	else
-	{
-		bRet = 0;
-		// 친구목록에서 나를 제거
-		auto rangeMe = _mFriendList.equal_range(accountNo);
+	pCharacter->dwActionTick = GetTickCount();
+	pCharacter->dwAction = dfPACKET_SC_ATTACK3;
+	pCharacter->iX = x;
+	pCharacter->iY = y;
+	pCharacter->iActionX = x;
+	pCharacter->iActionY = y;
 
-		for (auto iter = rangeMe.first; iter != rangeMe.second; ++iter)
-		{
-			if (iter->second == _mUserList[sk]->accountNo)
-			{
-				bRet = df_RESULT_FRIEND_REMOVE_OK;
-				_mFriendList.erase(iter);
-				break;
-			}
-		}
-	}
+	packetSz->Clear();
 
-	if (bRet == 0)
-	{
-		bRet = df_RESULT_FRIEND_REMOVE_OK;
-		printf("Friend Remove Fail Not meNo : %d\n", _mUserList[sk]->accountNo);
-	}
+	MakePacket_ATTACK3(packetSz, pCharacter->dwClientNo, btDir, x, y);
+	SendPacket_Around(pSession, packetSz);
 
-	st_PACKET_HEADER header = { 0, };
-	_packetSz << header;
+	// 공격 검사
+	DamageHitAround(pSession, 5);
 
-	MakePacket_ResFriendRemove(&_packetSz, accountNo, bRet);
-	_mUserList[sk]->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
-
-	return TRUE;
-}
-
-BOOL Network::Packet_StressTest(char * buf, UINT sk)
-{
-
-	_mUserList[sk]->recvQ;
-	WORD wSize = *(WORD*)buf;
-	WCHAR wchar[1024] = { 0, };
-	memcpy(wchar, buf + 2, wSize);
-	//printf("Stress Recv : %d\n", wSize);
-	//wprintf(L"%s\n", wchar);
-
-	st_PACKET_HEADER header = { 0, };
-	header.byCode = dfPACKET_CODE;
-	header.wMsgType = df_RES_STRESS_ECHO;
-	header.wPayloadSize = wSize + sizeof(WORD);
-	_packetSz << header;
-	_packetSz << wSize;
-	_packetSz << wchar;
-	_mUserList[sk]->sendQ.Enqueue(_packetSz.GetBufferPtr(), _packetSz.GetDataSize());
-
-	return TRUE;
+	return 1;
 }

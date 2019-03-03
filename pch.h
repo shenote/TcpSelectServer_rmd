@@ -16,6 +16,13 @@
 #include <ws2tcpip.h>
 #include <iostream>
 #include <Windows.h>
+#include <list>
+
+#include "rapidjson/document.h"
+#include "rapidjson/writer.h"
+#include "rapidjson/stringbuffer.h"
+
+using namespace rapidjson;
 
 using namespace std;
 
@@ -25,9 +32,50 @@ using namespace std;
 #include "cPacketSerialz.h"
 
 #include "MakePacket.h"
+#include "cSector.h"
 
 // engine
 #include "Network.h"
 
+// define
+#define dfLOG_LEVEL_DEBUG	0
+#define dfLOG_LEVEL_WARNING	1
+#define dfLOG_LEVEL_ERROR	2
+
+#define dfFRAME_COUNT 40
+
+#define dfERROR_RANG 50
+#define dfRECKONING_SPEED_PLAYER_X 6
+#define dfRECKONING_SPEED_PLAYER_Y 4
+
+#define dfRANGE_MOVE_TOP	0
+#define dfRANGE_MOVE_LEFT	0
+#define dfRANGE_MOVE_RIGHT	6400
+#define dfRANGE_MOVE_BOTTOM	6400
+
+#define dfSECTOR_MAX_X 64
+#define dfSECTOR_MAX_Y 64
+#define dfSECTOR_PIXEL_WIDTH (dfRANGE_MOVE_RIGHT / dfSECTOR_MAX_X)
+#define dfSECTOR_PIXEL_HEIGHT (dfRANGE_MOVE_BOTTOM / dfSECTOR_MAX_Y)
+
+#define dfARRANGE_DAMAGE_X 60
+#define dfARRANGE_DAMAGE_Y 20
+
+void Log(WCHAR *szString, int iLogLevel);
+
+#define _LOG(LogLevel, fmt, ...)					\
+do {												\
+	if (g_iLogLevel <= LogLevel)					\
+	{												\
+		wsprintf(g_szLogBuff, fmt, ##__VA_ARGS__);	\
+		Log(g_szLogBuff, LogLevel);					\
+	}												\
+}while(0)											\
+
+extern int g_iLogLevel;
+extern WCHAR g_szLogBuff[1024];
 extern UINT g_uiUser;
+extern list<st_CHARACTER*> g_Sector[dfSECTOR_PIXEL_WIDTH][dfSECTOR_PIXEL_HEIGHT];
+extern Network g_network;
+
 #endif //PCH_H

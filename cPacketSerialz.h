@@ -4,6 +4,8 @@
 
 // 직렬화 패킷에서 함부로 숫자를 더하거나 빼지 않는 것이 좋다. 데이터 타입이 변경되어서 혼란이 올 수 있음
 
+#define dfLIMITE_BUFFER_SIZE 400000000
+
 class cPacketSerialz
 {
 public:
@@ -14,7 +16,7 @@ public:
 
 	enum en_PACKET
 	{
-		eBUFFER_DEFAULT = 1400		// 패킷의 기본 버퍼 사이즈.
+		eBUFFER_DEFAULT = 18000		// 패킷의 기본 버퍼 사이즈.
 	};
 
 	//////////////////////////////////////////////////////////////////////////
@@ -129,12 +131,20 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	int		PutData(char *chpSrc, int iSrcSize);
 
+	//////////////////////////////////////////////////////////////////////////
+	// 메모리 증가.
+	//
+	// 메모리가 부족하게 된다면 기존 메모리에서 두배 + SrcSize만큼 증가 시킨다.
+	// 제한은 걸려 있지 않음.
+	//////////////////////////////////////////////////////////////////////////
+	void ReAllocMemory(int iSrcSize);
 
 protected:
 	int m_iBufferSize;
 	int m_iDataSize;
 	int m_iReadSize;
 	char * m_chpBuffer;
+	int m_iFullSize;
 
 };
 

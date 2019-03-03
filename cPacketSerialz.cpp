@@ -8,14 +8,16 @@ cPacketSerialz::cPacketSerialz()
 	m_iBufferSize = eBUFFER_DEFAULT;
 	m_iDataSize = 0;
 	m_iReadSize = 0;
+	m_iFullSize = eBUFFER_DEFAULT;
 }
 
 cPacketSerialz::cPacketSerialz(int bufferSize)
 {
 	m_chpBuffer = new char[bufferSize];
-	m_iBufferSize = eBUFFER_DEFAULT;
+	m_iBufferSize = bufferSize;
 	m_iDataSize = 0;
 	m_iReadSize = 0;
+	m_iFullSize = bufferSize;
 }
 
 
@@ -27,7 +29,7 @@ cPacketSerialz::~cPacketSerialz()
 void cPacketSerialz::Release(void)
 {
 	if (this != NULL)
-		delete m_chpBuffer;
+		delete[] m_chpBuffer;
 }
 
 void cPacketSerialz::Clear(void)
@@ -64,7 +66,7 @@ cPacketSerialz & cPacketSerialz::operator=(cPacketSerialz & clSrcPacketSerialz)
 cPacketSerialz & cPacketSerialz::operator<<(BYTE byValue)
 {
 	if (m_iBufferSize < 1)
-		return *this;
+		ReAllocMemory(1);
 
 	memcpy(m_chpBuffer + m_iDataSize, reinterpret_cast<char*>(&byValue), 1);
 	m_iBufferSize -= 1;
@@ -76,7 +78,7 @@ cPacketSerialz & cPacketSerialz::operator<<(BYTE byValue)
 cPacketSerialz & cPacketSerialz::operator<<(char chValue)
 {
 	if (m_iBufferSize < 1)
-		return *this;
+		ReAllocMemory(1);
 
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	memcpy(m_chpBuffer + m_iDataSize, &chValue, 1);
@@ -88,7 +90,7 @@ cPacketSerialz & cPacketSerialz::operator<<(char chValue)
 cPacketSerialz & cPacketSerialz::operator<<(short shValue)
 {
 	if (m_iBufferSize < 2)
-		return *this;
+		ReAllocMemory(2);
 
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	memcpy(m_chpBuffer + m_iDataSize, reinterpret_cast<char*>(&shValue), 2);
@@ -100,7 +102,7 @@ cPacketSerialz & cPacketSerialz::operator<<(short shValue)
 cPacketSerialz & cPacketSerialz::operator<<(WORD wValue)
 {
 	if (m_iBufferSize < 2)
-		return *this;
+		ReAllocMemory(2);
 
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	memcpy(m_chpBuffer + m_iDataSize, reinterpret_cast<char*>(&wValue), 2);
@@ -112,7 +114,7 @@ cPacketSerialz & cPacketSerialz::operator<<(WORD wValue)
 cPacketSerialz & cPacketSerialz::operator<<(int iValue)
 {
 	if (m_iBufferSize < 4)
-		return *this;
+		ReAllocMemory(4);
 
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	memcpy(m_chpBuffer + m_iDataSize, reinterpret_cast<char*>(&iValue), 4);
@@ -124,7 +126,7 @@ cPacketSerialz & cPacketSerialz::operator<<(int iValue)
 cPacketSerialz & cPacketSerialz::operator<<(DWORD dwValue)
 {
 	if (m_iBufferSize < 4)
-		return *this;
+		ReAllocMemory(4);
 
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	memcpy(m_chpBuffer + m_iDataSize, reinterpret_cast<char*>(&dwValue), 4);
@@ -136,7 +138,7 @@ cPacketSerialz & cPacketSerialz::operator<<(DWORD dwValue)
 cPacketSerialz & cPacketSerialz::operator<<(float fValue)
 {
 	if (m_iBufferSize < 4)
-		return *this;
+		ReAllocMemory(4);
 
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	memcpy(m_chpBuffer + m_iDataSize, reinterpret_cast<char*>(&fValue), 4);
@@ -148,7 +150,7 @@ cPacketSerialz & cPacketSerialz::operator<<(float fValue)
 cPacketSerialz & cPacketSerialz::operator<<(__int64 iValue)
 {
 	if (m_iBufferSize < 8)
-		return *this;
+		ReAllocMemory(8);
 
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	memcpy(m_chpBuffer + m_iDataSize, reinterpret_cast<char*>(&iValue), 8);
@@ -160,7 +162,7 @@ cPacketSerialz & cPacketSerialz::operator<<(__int64 iValue)
 cPacketSerialz & cPacketSerialz::operator<<(double dValue)
 {
 	if (m_iBufferSize < 8)
-		return *this;
+		ReAllocMemory(8);
 
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	memcpy(m_chpBuffer + m_iDataSize, reinterpret_cast<char*>(&dValue), 8);
@@ -174,7 +176,7 @@ cPacketSerialz & cPacketSerialz::operator<<(st_PACKET_HEADER stData)
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	int size = sizeof(st_PACKET_HEADER);
 	if (m_iBufferSize < size)
-		return *this;
+		ReAllocMemory(size);
 
 	memcpy(m_chpBuffer + m_iDataSize, reinterpret_cast<char*>(&stData), size);
 	m_iBufferSize -= size;
@@ -188,7 +190,7 @@ cPacketSerialz & cPacketSerialz::operator<<(UINT uiInt)
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	int size = sizeof(UINT);
 	if (m_iBufferSize < size)
-		return *this;
+		ReAllocMemory(size);
 
 	memcpy(m_chpBuffer + m_iDataSize, reinterpret_cast<char*>(&uiInt), size);
 	m_iBufferSize -= size;
@@ -201,7 +203,7 @@ cPacketSerialz & cPacketSerialz::operator<<(const WCHAR * wChar)
 {
 	int size = lstrlenW(wChar) * 2;
 	if (m_iBufferSize < size)
-		return *this;
+		ReAllocMemory(size);
 
 	memcpy(m_chpBuffer + m_iDataSize, wChar, size);
 	m_iBufferSize -= size;
@@ -214,7 +216,7 @@ cPacketSerialz & cPacketSerialz::operator<<(UINT64 uInt64)
 {
 	int size = sizeof(uInt64);
 	if (m_iBufferSize < size)
-		return *this;
+		ReAllocMemory(size);
 
 	memcpy(m_chpBuffer + m_iDataSize, reinterpret_cast<char*>(&uInt64), size);
 	m_iBufferSize -= size;
@@ -225,7 +227,7 @@ cPacketSerialz & cPacketSerialz::operator<<(UINT64 uInt64)
 
 cPacketSerialz & cPacketSerialz::operator>>(BYTE & byValue)
 {
-	if (m_iBufferSize > 0)
+	if (m_iBufferSize < 1)
 		return *this;
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	memcpy(&byValue, m_chpBuffer + m_iReadSize, 1);
@@ -236,7 +238,7 @@ cPacketSerialz & cPacketSerialz::operator>>(BYTE & byValue)
 
 cPacketSerialz & cPacketSerialz::operator>>(char & chValue)
 {
-	if (m_iBufferSize > 0)
+	if (m_iBufferSize < 1)
 		return *this;
 
 	memcpy(&chValue, m_chpBuffer + m_iReadSize, 1);
@@ -248,7 +250,7 @@ cPacketSerialz & cPacketSerialz::operator>>(char & chValue)
 
 cPacketSerialz & cPacketSerialz::operator>>(short & shValue)
 {
-	if (m_iBufferSize > 1)
+	if (m_iBufferSize < 2)
 		return *this;
 
 	memcpy(&shValue, m_chpBuffer + m_iReadSize, 2);
@@ -260,7 +262,7 @@ cPacketSerialz & cPacketSerialz::operator>>(short & shValue)
 
 cPacketSerialz & cPacketSerialz::operator>>(WORD & wValue)
 {
-	if (m_iBufferSize > 1)
+	if (m_iBufferSize < 2)
 		return *this;
 
 	memcpy(&wValue, m_chpBuffer + m_iReadSize, 2);
@@ -272,7 +274,7 @@ cPacketSerialz & cPacketSerialz::operator>>(WORD & wValue)
 
 cPacketSerialz & cPacketSerialz::operator>>(int & iValue)
 {
-	if (m_iBufferSize > 3)
+	if (m_iBufferSize < 4)
 		return *this;
 
 	memcpy(&iValue, m_chpBuffer + m_iReadSize, 4);
@@ -284,7 +286,7 @@ cPacketSerialz & cPacketSerialz::operator>>(int & iValue)
 
 cPacketSerialz & cPacketSerialz::operator>>(DWORD & dwValue)
 {
-	if (m_iBufferSize > 3)
+	if (m_iBufferSize < 4)
 		return *this;
 
 	memcpy(&dwValue, m_chpBuffer + m_iReadSize, 4);
@@ -296,7 +298,7 @@ cPacketSerialz & cPacketSerialz::operator>>(DWORD & dwValue)
 
 cPacketSerialz & cPacketSerialz::operator>>(float & fValue)
 {
-	if (m_iBufferSize > 3)
+	if (m_iBufferSize < 4)
 		return *this;
 
 	memcpy(&fValue, m_chpBuffer + m_iReadSize, 4);
@@ -308,7 +310,7 @@ cPacketSerialz & cPacketSerialz::operator>>(float & fValue)
 
 cPacketSerialz & cPacketSerialz::operator>>(__int64 & iValue)
 {
-	if (m_iBufferSize > 7)
+	if (m_iBufferSize < 8)
 		return *this;
 
 	memcpy(&iValue, m_chpBuffer + m_iReadSize, 8);
@@ -320,7 +322,7 @@ cPacketSerialz & cPacketSerialz::operator>>(__int64 & iValue)
 
 cPacketSerialz & cPacketSerialz::operator>>(double & dValue)
 {
-	if (m_iBufferSize > 7)
+	if (m_iBufferSize < 8)
 		return *this;
 
 	memcpy(&dValue, m_chpBuffer + m_iReadSize, 8);
@@ -334,7 +336,7 @@ cPacketSerialz & cPacketSerialz::operator>>(st_PACKET_HEADER & stData)
 {
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	int size = sizeof(st_PACKET_HEADER);
-	if (m_iBufferSize > size)
+	if (m_iBufferSize < size)
 		return *this;
 
 	memcpy(&stData, m_chpBuffer + m_iReadSize, size);
@@ -348,7 +350,7 @@ cPacketSerialz & cPacketSerialz::operator>>(UINT uiInt)
 {
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	int size = sizeof(UINT);
-	if (m_iBufferSize > size)
+	if (m_iBufferSize < size)
 		return *this;
 
 	memcpy(&uiInt, m_chpBuffer + m_iReadSize, size);
@@ -361,7 +363,7 @@ cPacketSerialz & cPacketSerialz::operator>>(const WCHAR * wChar)
 {
 	// TODO: 여기에 반환 구문을 삽입합니다.
 	int size = wcslen(wChar);
-	if (m_iBufferSize > size)
+	if (m_iBufferSize < size)
 		return *this;
 	
 	memcpy(&wChar, m_chpBuffer + m_iReadSize, size);
@@ -373,7 +375,7 @@ cPacketSerialz & cPacketSerialz::operator>>(const WCHAR * wChar)
 cPacketSerialz & cPacketSerialz::operator>>(UINT64 uInt64)
 {
 	int size = sizeof(UINT64);
-	if (m_iBufferSize > size)
+	if (m_iBufferSize < size)
 		return *this;
 
 	memcpy(&uInt64, m_chpBuffer + m_iReadSize, size);
@@ -393,11 +395,28 @@ int cPacketSerialz::GetData(char * chpDest, int iSize)
 int cPacketSerialz::PutData(char * chpSrc, int iSrcSize)
 {
 	if (m_iBufferSize < iSrcSize)
-	{
-		return 0;
-	}
+		ReAllocMemory(iSrcSize);
+
 	memcpy(m_chpBuffer + m_iDataSize, chpSrc, iSrcSize);
 	m_iBufferSize -= iSrcSize;
 	m_iDataSize += iSrcSize;
 	return 0;
+}
+
+void cPacketSerialz::ReAllocMemory(int iSrcSize)
+{
+	if ((m_iFullSize * 2) + iSrcSize > dfLIMITE_BUFFER_SIZE)
+	{
+		_LOG(dfLOG_LEVEL_DEBUG, L"MemoryAlloc : CiriticalError : 메모리 사이즈가 가득참");
+		exit(0);
+	}
+	_LOG(dfLOG_LEVEL_DEBUG, L"MemoryAlloc : PrevSize : %d --> NextSize : %d", m_iFullSize, m_iFullSize * 2 + iSrcSize);
+	char * pTempMomory = new char[(m_iFullSize * 2) + iSrcSize];
+	memcpy(pTempMomory, m_chpBuffer + m_iReadSize, m_iDataSize);
+	delete m_chpBuffer;
+
+	m_iFullSize = (m_iFullSize * 2) + iSrcSize;
+	m_iBufferSize += m_iFullSize - m_iBufferSize;
+	m_chpBuffer = pTempMomory;
+
 }
