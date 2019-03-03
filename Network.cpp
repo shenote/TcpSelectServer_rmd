@@ -5,32 +5,17 @@ Network::Network()
 {
 }
 
-
 Network::~Network()
 {
 }
 
-BOOL Network::DomaionToIP(const WCHAR *szDomain, IN_ADDR *pAddr)
-{
-	ADDRINFOW * pAddrInfo;
-	SOCKADDR_IN * pSockAddr;
-	if (GetAddrInfo(szDomain, L"0", NULL, &pAddrInfo) != 0)
-	{
-		return FALSE;
-	}
-	pSockAddr = (SOCKADDR_IN*)pAddrInfo->ai_addr;
-	*pAddr = pSockAddr->sin_addr;
-	FreeAddrInfo(pAddrInfo);
-	return TRUE;
-}
-
 HRESULT Network::init()
 {
-	_bConnect = false;		 // 서버 바인딩 성공 여부
+	_bConnect = false;		// 서버 바인딩 성공 여부
 	_listenSocket = 0;		 
 	_mSessionList.clear();	// 유저 세션 리스트
-	_packetSz.Clear();		 // 직렬화 초기화
-	_mCharList.clear();		 // 케릭터
+	_packetSz.Clear();		// 직렬화 초기화
+	_mCharList.clear();		// 케릭터
 
 	_headerSize = sizeof(st_PACKET_HEADER);
 
@@ -61,12 +46,6 @@ HRESULT Network::init()
 	SOCKADDR_IN sockaddr;
 	ZeroMemory(&sockaddr, sizeof(sockaddr));
 	sockaddr.sin_family = AF_INET;
-	 //INADDR_ANY 는 서버의 IP주소를 자동으로 찾아서 대입해주는 함수이다.
-	//서버는 NIC을 2개 이상 가지고 있는 경우가 많은데 만일 특정 NIC의 IP주소를 sin_addr.s_addr에 지정하면 다른 NIC에서 연결된 요청은
-	//서비스 할 수 없게 된다. 이때 INADDR_ANY를 이용하면 두 NIC를 모두 바인딩해주므로 어느 IP를 통해 접속해도 서비스가 가능해짐.
-	//IP주소를 INADDR_ANY 로, 포트 번호를 9000으로 할 경우 => 현재 서버 컴퓨터의 9000번 포트를 목적지로 하는 모든 연결 요청을 해당 서버
-	//응용프로그램에서 처리하겠다는 의미.
-	//sockaddr.sin_addr = inAddr;
 	sockaddr.sin_addr.s_addr = htonl(INADDR_ANY);
 	sockaddr.sin_port = htons(dfNETWORK_PORT);
 
@@ -78,7 +57,7 @@ HRESULT Network::init()
 		return 0;
 	}
 
-	// 리슨  클라이언트가 이쪽으로 들어옴 3핸즈 쉐이킹 이라고 보면 됨. 최대 접속자수가 150인가 200인가.? 연결들어와서 서버에서 소켓 만들어줄때까지 대기하는 공간
+	// 리슨  클라이언트가 이쪽으로 들어옴 3핸즈 쉐이킹 이라고 보면 됨. 최대 접속자수가 윈도우 200 연결들어와서 서버에서 소켓 만들어줄때까지 대기하는 공간
 	// 리슨소켓을 확인해서 배열의 하나씩 뽑아낸다고 보면 됨.
 	// 어쨌든 기본적인 연결 통로는 모두 마련 되었다고 보면 된다.
 	listen(_listenSocket, SOMAXCONN);
@@ -94,195 +73,20 @@ void Network::release()
 	WSACleanup();
 }
 
-int Network::DeadReckoningPos(BYTE byDir, DWORD dwActionTick, WORD wOldPosX, WORD wOldPosY, WORD & pPosX, WORD & pPosY)
+
+BOOL Network::DomaionToIP(const WCHAR *szDomain, IN_ADDR *pAddr)
 {
-	// 이동을 시작했던 시작 시작과 현재 시간의 차를 구한다.
-	DWORD dwIntervalTick = timeGetTime() - dwActionTick;
-	int iActionFrame = dwIntervalTick / dfFRAME_COUNT;	// 40ms 세컨드로 나누면 프레임이 나옴
-	int iRemoveFrame = 0;
-	int iValue;
-
-	int iRPosX = wOldPosX;
-	int iRPosY = wOldPosY;
-	//1. 계산된 프레임으로 X축, Y축의 좌표 이동값을 구함.
-	int iDX = iActionFrame * dfRECKONING_SPEED_PLAYER_X;
-	int iDY = iActionFrame * dfRECKONING_SPEED_PLAYER_Y;
-
-	switch (byDir)
+	ADDRINFOW * pAddrInfo;
+	SOCKADDR_IN * pSockAddr;
+	if (GetAddrInfo(szDomain, L"0", NULL, &pAddrInfo) != 0)
 	{
-	case dfPACKET_MOVE_DIR_LL:
-		iRPosX = wOldPosX - iDX;
-		iRPosY = wOldPosY;
-		break;
-	case dfPACKET_MOVE_DIR_LU:
-		iRPosX = wOldPosX - iDX;
-		iRPosY = wOldPosY - iDY;
-		break;
-	case dfPACKET_MOVE_DIR_UU:
-		iRPosX = wOldPosX;
-		iRPosY = wOldPosY - iDY;
-		break;
-	case dfPACKET_MOVE_DIR_RU:
-		iRPosX = wOldPosX + iDX;
-		iRPosY = wOldPosY - iDY;
-		break;
-	case dfPACKET_MOVE_DIR_RR:
-		iRPosX = wOldPosX + iDX;
-		iRPosY = wOldPosY;
-		break;
-	case dfPACKET_MOVE_DIR_RD:
-		iRPosX = wOldPosX + iDX;
-		iRPosY = wOldPosY + iDY;
-		break;
-	case dfPACKET_MOVE_DIR_DD:
-		iRPosX = wOldPosX;
-		iRPosY = wOldPosY + iDY;
-		break;
-	case dfPACKET_MOVE_DIR_LD:
-		iRPosX = wOldPosX - iDX;
-		iRPosY = wOldPosY + iDY;
-		break;
+		return FALSE;
 	}
-
-	// 여기까지가 iRPosX, iRPosY에 계산된 좌표가 완료 되었음.
-	// 이 아래 부분은 계산된 좌표가 화면의 이동 영역을 벗어난 경우 그 액션을 잘라내기 위해서 
-	// 영역을 벗어난 이후의 프레임을 계산 하는 과정
-	
-	if (iRPosX <= dfRANGE_MOVE_LEFT)
-	{
-		iValue = abs(dfRANGE_MOVE_LEFT - abs(iRPosX)) / dfRECKONING_SPEED_PLAYER_X;
-		iRemoveFrame = max(iValue, iRemoveFrame);
-	}
-	if (iRPosX >= dfRANGE_MOVE_RIGHT)
-	{
-		iValue = abs(dfRANGE_MOVE_RIGHT - iRPosX) / dfRECKONING_SPEED_PLAYER_X;
-		iRemoveFrame = max(iValue, iRemoveFrame);
-	}
-	if (iRPosY <= dfRANGE_MOVE_TOP)
-	{
-		iValue = abs(dfRANGE_MOVE_TOP - abs(iRPosY)) / dfRECKONING_SPEED_PLAYER_Y;
-		iRemoveFrame = max(iValue, iRemoveFrame);
-	}
-	if (iRPosY >= dfRANGE_MOVE_BOTTOM)
-	{
-		iValue = abs(dfRANGE_MOVE_BOTTOM - iRPosY) / dfRECKONING_SPEED_PLAYER_Y;
-		iRemoveFrame = max(iValue, iRemoveFrame);
-	}
-
-	// 위에서 계산된 결과 삭제 되어야 할 프레임이 나타났다면 좌표를 다시 재 계산
-	if (iRemoveFrame > 0)
-	{
-		iActionFrame -= iRemoveFrame;
-		// 보정된 좌표로 다시 계산
-		iDX = iActionFrame * dfRECKONING_SPEED_PLAYER_X;
-		iDY = iActionFrame * dfRECKONING_SPEED_PLAYER_Y;
-
-		switch (byDir)
-		{
-		case dfPACKET_MOVE_DIR_LL:
-			iRPosX = wOldPosX - iDX;
-			iRPosY = wOldPosY;
-			break;
-		case dfPACKET_MOVE_DIR_LU:
-			iRPosX = wOldPosX - iDX;
-			iRPosY = wOldPosY - iDY;
-			break;
-		case dfPACKET_MOVE_DIR_UU:
-			iRPosX = wOldPosX;
-			iRPosY = wOldPosY - iDY;
-			break;
-		case dfPACKET_MOVE_DIR_RU:
-			iRPosX = wOldPosX + iDX;
-			iRPosY = wOldPosY - iDY;
-			break;
-		case dfPACKET_MOVE_DIR_RR:
-			iRPosX = wOldPosX + iDX;
-			iRPosY = wOldPosY;
-			break;
-		case dfPACKET_MOVE_DIR_RD:
-			iRPosX = wOldPosX + iDX;
-			iRPosY = wOldPosY + iDY;
-			break;
-		case dfPACKET_MOVE_DIR_DD:
-			iRPosX = wOldPosX;
-			iRPosY = wOldPosY + iDY;
-			break;
-		case dfPACKET_MOVE_DIR_LD:
-			iRPosX = wOldPosX - iDX;
-			iRPosY = wOldPosY + iDY;
-			break;
-		}
-	}
-
-	iRPosX = min(iRPosX, dfRANGE_MOVE_RIGHT);
-	iRPosX = max(iRPosX, dfRANGE_MOVE_LEFT);
-	iRPosY = min(iRPosY, dfRANGE_MOVE_BOTTOM);
-	iRPosY = max(iRPosY, dfRANGE_MOVE_TOP);
-
-	pPosX = iRPosX;
-	pPosY = iRPosY;
-
-	return iActionFrame;
+	pSockAddr = (SOCKADDR_IN*)pAddrInfo->ai_addr;
+	*pAddr = pSockAddr->sin_addr;
+	FreeAddrInfo(pAddrInfo);
+	return TRUE;
 }
-
-void Network::DamageHitAround(st_SESSION * pSession, int iDamage)
-{
-	// 주변 9개 섹터의 유닛들 중에 현재 플레이어의 좌표롸 가장 가까운 녀석을 찾아서 데미지를 먹인다.
-
-	list<st_CHARACTER * > *pSectorList;
-	list<st_CHARACTER *>::iterator ListIter;
-	st_SECTOR_AROUND CurSectorAround;
-	//cPacketSerialz Packet;
-	_packetSz.Clear();
-
-	st_CHARACTER * character = FindCharacter(pSession);
-	GetSectorAround(character->curSector.iX, character->curSector.iY, &CurSectorAround);
-
-	for (int i = 0; i < CurSectorAround.iCount; ++i)
-	{
-		pSectorList = &g_Sector[CurSectorAround.around[i].iY][CurSectorAround.around[i].iX];
-
-		// 섹터에 인원이 없으면 리턴
-		if (pSectorList->size() == 0)
-			continue;
-
-		for (ListIter = pSectorList->begin(); ListIter != pSectorList->end(); ListIter++)
-		{
-			if ((*ListIter) == character)
-				continue;
-
-			// 케릭터가 바라보는 방향
-			if (character->byArrowDirection == dfPACKET_MOVE_DIR_LL)
-			{
-				// X축이 케릭터보다 작아야함
-				if ((*ListIter)->iX > character->iX)
-					continue;
-			}
-			else if(character->byArrowDirection == dfPACKET_MOVE_DIR_RR)
-			{
-				// X축이 케릭터보다 커야함
-				if ((*ListIter)->iX < character->iX)
-					continue;
-			}
-			if(abs((*ListIter)->iX - character->iX) < dfARRANGE_DAMAGE_X && abs((*ListIter)->iY - character->iY) < dfARRANGE_DAMAGE_Y)
-			{
-
-				if ((*ListIter)->byHp - iDamage <= 0)
-					(*ListIter)->byHp = 0;
-				else
-					(*ListIter)->byHp -= iDamage;
-
-				MakePacket_DAMAGE(&_packetSz, character->dwClientNo, (*ListIter)->dwClientNo, (*ListIter)->byHp);
-				// 맞는애 중심으로 보낸다.
-				SendPacket_Around((*ListIter)->pSession, &_packetSz, true);
-				_packetSz.Clear();
-				break;
-			}
-		}
-
-	}
-}
-
 
 void Network::update()
 {
@@ -464,7 +268,6 @@ void Network::netSelectSocket(SOCKET * pTableSocket, FD_SET * pReadSet, FD_SET *
 					continue;
 				}
 
-				//continue;
 				// 처리할게 있으면 다 처리함
 				while (pSession->recvQ.GetUseSize() >= _headerSize)
 				{
@@ -509,7 +312,6 @@ void Network::netSelectSocket(SOCKET * pTableSocket, FD_SET * pReadSet, FD_SET *
 			}
 		}
 	}
-	
 }
 
 int Network::netProc_Recv(st_SESSION * pSession)
@@ -542,7 +344,7 @@ int Network::netProc_Recv(st_SESSION * pSession)
 	// MovePtr + 패킷 엔드 코드
 	pSession->recvQ.MoveFront(header.bySize + _headerSize + 1);
 
-	++_uiPPS;
+	++_uiTPS;
 
 	return RECV_CHECK::RECV_OK;
 }
@@ -553,8 +355,6 @@ int Network::CompleteRecvPacket(WORD wMsgType_, char * buf_, int bufSize_, st_SE
 	// 직렬화 초기화
 	_packetSz.Clear();
 
-	//cPacketSerialz packetSz;
-	//packetSz.PutData(buf_ + _headerSize, bufSize_ - _headerSize);
 	_packetSz.PutData(buf_ + _headerSize, bufSize_ - _headerSize);
 	
 	int iProcRet = 1;
@@ -717,19 +517,6 @@ void Network::CreateCharacter(st_SESSION * pSession)
 
 //
 //----------------------------------------------------------------
-// 캐릭터 삭제
-//----------------------------------------------------------------
-//
-
-void Network::DeleteCharacter(DWORD id)
-{
-	_packetSz.Clear();
-	MakePacket_DeleteOtherCharacter(&_packetSz, id);
-	SendOther(_packetSz.GetBufferPtr(), _packetSz.GetDataSize(), id);
-}
-
-//
-//----------------------------------------------------------------
 // 클라이언트 접속 해제
 //----------------------------------------------------------------
 //
@@ -746,7 +533,7 @@ BOOL Network::DisconnectSession(SOCKET sk_)
 			// 1.RemoveSector 에 캐릭터 삭제 패킷 보내기
 			MakePacket_DeleteOtherCharacter(&packetDelete, _mCharList[sk_]->dwClientNo);
 
-			// 주변에게 제거 패킷
+			// 주변에게 회원정보 삭제 패킷
 			SendPacket_Around(_mSessionList[sk_], &packetDelete);
 			
 			// 섹터 제거
@@ -796,25 +583,9 @@ BOOL Network::CheckSum(int checkVal_, WORD wMsgType_, int payLoadSize_, char * p
 //------------------------------------------------------------------------
 //
 
-void Network::SendAll(char * buf, int size)
-{
-	return;
-	for(auto iter = _mSessionList.begin(); iter != _mSessionList.end(); ++iter)
-		_mSessionList[iter->first]->sendQ.Enqueue(buf, size);
-}
-
-void Network::SendOther(char * buf, int size, UINT sk)
-{
-	return;
-	for (auto iter = _mSessionList.begin(); iter != _mSessionList.end(); ++iter)
-	{
-		if (iter->first == sk)
-			continue;
-		
-		_mSessionList[iter->first]->sendQ.Enqueue(buf, size);
-	}
-}
-
+// ---------------------------------------------
+// 특정 섹터영역에만 보냄
+// ---------------------------------------------
 void Network::SendPacket_SectorOne(int iX, int iY, cPacketSerialz * packetSz, st_SESSION * pExceptSession)
 {
 	list<st_CHARACTER * > *pSectorList;
@@ -830,11 +601,17 @@ void Network::SendPacket_SectorOne(int iX, int iY, cPacketSerialz * packetSz, st
 	}
 }
 
+// ---------------------------------------------
+// 한 명에게 전송
+// ---------------------------------------------
 void Network::SendPacket_Unicast(st_SESSION * pSession, cPacketSerialz * packetSz)
 {
 	pSession->sendQ.Enqueue(packetSz->GetBufferPtr(), packetSz->GetDataSize());
 }
 
+// ---------------------------------------------
+// 주변 섹터 클라이언트 에게 전송
+// ---------------------------------------------
 void Network::SendPacket_Around(st_SESSION * pSession, cPacketSerialz * packetSz, bool bSendMe)
 {
 	list<st_CHARACTER * > *pSectorList;
@@ -866,8 +643,205 @@ void Network::SendPacket_Around(st_SESSION * pSession, cPacketSerialz * packetSz
 	}
 }
 
+// ---------------------------------------------
+// 브로드캐스팅 사용 안함
+// ---------------------------------------------
 void Network::SendPacket_Broadcast(st_SESSION * pSession, cPacketSerialz * packetSz)
 {
+}
+
+// ---------------------------------------------
+// 데드레커닝
+// ---------------------------------------------
+int Network::DeadReckoningPos(BYTE byDir, DWORD dwActionTick, WORD wOldPosX, WORD wOldPosY, WORD & pPosX, WORD & pPosY)
+{
+	// 이동을 시작했던 시작 시작과 현재 시간의 차를 구한다.
+	DWORD dwIntervalTick = timeGetTime() - dwActionTick;
+	int iActionFrame = dwIntervalTick / dfFRAME_COUNT;	// 40ms 세컨드로 나누면 프레임이 나옴
+	int iRemoveFrame = 0;
+	int iValue;
+
+	int iRPosX = wOldPosX;
+	int iRPosY = wOldPosY;
+	//1. 계산된 프레임으로 X축, Y축의 좌표 이동값을 구함.
+	int iDX = iActionFrame * dfRECKONING_SPEED_PLAYER_X;
+	int iDY = iActionFrame * dfRECKONING_SPEED_PLAYER_Y;
+
+	switch (byDir)
+	{
+	case dfPACKET_MOVE_DIR_LL:
+		iRPosX = wOldPosX - iDX;
+		iRPosY = wOldPosY;
+		break;
+	case dfPACKET_MOVE_DIR_LU:
+		iRPosX = wOldPosX - iDX;
+		iRPosY = wOldPosY - iDY;
+		break;
+	case dfPACKET_MOVE_DIR_UU:
+		iRPosX = wOldPosX;
+		iRPosY = wOldPosY - iDY;
+		break;
+	case dfPACKET_MOVE_DIR_RU:
+		iRPosX = wOldPosX + iDX;
+		iRPosY = wOldPosY - iDY;
+		break;
+	case dfPACKET_MOVE_DIR_RR:
+		iRPosX = wOldPosX + iDX;
+		iRPosY = wOldPosY;
+		break;
+	case dfPACKET_MOVE_DIR_RD:
+		iRPosX = wOldPosX + iDX;
+		iRPosY = wOldPosY + iDY;
+		break;
+	case dfPACKET_MOVE_DIR_DD:
+		iRPosX = wOldPosX;
+		iRPosY = wOldPosY + iDY;
+		break;
+	case dfPACKET_MOVE_DIR_LD:
+		iRPosX = wOldPosX - iDX;
+		iRPosY = wOldPosY + iDY;
+		break;
+	}
+
+	// 여기까지가 iRPosX, iRPosY에 계산된 좌표가 완료 되었음.
+	// 이 아래 부분은 계산된 좌표가 화면의 이동 영역을 벗어난 경우 그 액션을 잘라내기 위해서 
+	// 영역을 벗어난 이후의 프레임을 계산 하는 과정
+
+	if (iRPosX <= dfRANGE_MOVE_LEFT)
+	{
+		iValue = abs(dfRANGE_MOVE_LEFT - abs(iRPosX)) / dfRECKONING_SPEED_PLAYER_X;
+		iRemoveFrame = max(iValue, iRemoveFrame);
+	}
+	if (iRPosX >= dfRANGE_MOVE_RIGHT)
+	{
+		iValue = abs(dfRANGE_MOVE_RIGHT - iRPosX) / dfRECKONING_SPEED_PLAYER_X;
+		iRemoveFrame = max(iValue, iRemoveFrame);
+	}
+	if (iRPosY <= dfRANGE_MOVE_TOP)
+	{
+		iValue = abs(dfRANGE_MOVE_TOP - abs(iRPosY)) / dfRECKONING_SPEED_PLAYER_Y;
+		iRemoveFrame = max(iValue, iRemoveFrame);
+	}
+	if (iRPosY >= dfRANGE_MOVE_BOTTOM)
+	{
+		iValue = abs(dfRANGE_MOVE_BOTTOM - iRPosY) / dfRECKONING_SPEED_PLAYER_Y;
+		iRemoveFrame = max(iValue, iRemoveFrame);
+	}
+
+	// 위에서 계산된 결과 삭제 되어야 할 프레임이 나타났다면 좌표를 다시 재 계산
+	if (iRemoveFrame > 0)
+	{
+		iActionFrame -= iRemoveFrame;
+		// 보정된 좌표로 다시 계산
+		iDX = iActionFrame * dfRECKONING_SPEED_PLAYER_X;
+		iDY = iActionFrame * dfRECKONING_SPEED_PLAYER_Y;
+
+		switch (byDir)
+		{
+		case dfPACKET_MOVE_DIR_LL:
+			iRPosX = wOldPosX - iDX;
+			iRPosY = wOldPosY;
+			break;
+		case dfPACKET_MOVE_DIR_LU:
+			iRPosX = wOldPosX - iDX;
+			iRPosY = wOldPosY - iDY;
+			break;
+		case dfPACKET_MOVE_DIR_UU:
+			iRPosX = wOldPosX;
+			iRPosY = wOldPosY - iDY;
+			break;
+		case dfPACKET_MOVE_DIR_RU:
+			iRPosX = wOldPosX + iDX;
+			iRPosY = wOldPosY - iDY;
+			break;
+		case dfPACKET_MOVE_DIR_RR:
+			iRPosX = wOldPosX + iDX;
+			iRPosY = wOldPosY;
+			break;
+		case dfPACKET_MOVE_DIR_RD:
+			iRPosX = wOldPosX + iDX;
+			iRPosY = wOldPosY + iDY;
+			break;
+		case dfPACKET_MOVE_DIR_DD:
+			iRPosX = wOldPosX;
+			iRPosY = wOldPosY + iDY;
+			break;
+		case dfPACKET_MOVE_DIR_LD:
+			iRPosX = wOldPosX - iDX;
+			iRPosY = wOldPosY + iDY;
+			break;
+		}
+	}
+
+	iRPosX = min(iRPosX, dfRANGE_MOVE_RIGHT);
+	iRPosX = max(iRPosX, dfRANGE_MOVE_LEFT);
+	iRPosY = min(iRPosY, dfRANGE_MOVE_BOTTOM);
+	iRPosY = max(iRPosY, dfRANGE_MOVE_TOP);
+
+	pPosX = iRPosX;
+	pPosY = iRPosY;
+
+	return iActionFrame;
+}
+
+// ---------------------------------------------
+// 케릭터 타격 검사 (주변 섹터 안의 케릭터 모두 검사)
+// ---------------------------------------------
+void Network::DamageHitAround(st_SESSION * pSession, int iDamage)
+{
+	// 주변 9개 섹터의 유닛들 중에 현재 플레이어의 좌표롸 가장 가까운 녀석을 찾아서 데미지를 먹인다.
+
+	list<st_CHARACTER * > *pSectorList;
+	list<st_CHARACTER *>::iterator ListIter;
+	st_SECTOR_AROUND CurSectorAround;
+	//cPacketSerialz Packet;
+	_packetSz.Clear();
+
+	st_CHARACTER * character = FindCharacter(pSession);
+	GetSectorAround(character->curSector.iX, character->curSector.iY, &CurSectorAround);
+
+	for (int i = 0; i < CurSectorAround.iCount; ++i)
+	{
+		pSectorList = &g_Sector[CurSectorAround.around[i].iY][CurSectorAround.around[i].iX];
+
+		// 섹터에 인원이 없으면 리턴
+		if (pSectorList->size() == 0)
+			continue;
+
+		for (ListIter = pSectorList->begin(); ListIter != pSectorList->end(); ListIter++)
+		{
+			if ((*ListIter) == character)
+				continue;
+
+			// 케릭터가 바라보는 방향
+			if (character->byArrowDirection == dfPACKET_MOVE_DIR_LL)
+			{
+				// X축이 케릭터보다 작아야함
+				if ((*ListIter)->iX > character->iX)
+					continue;
+			}
+			else if (character->byArrowDirection == dfPACKET_MOVE_DIR_RR)
+			{
+				// X축이 케릭터보다 커야함
+				if ((*ListIter)->iX < character->iX)
+					continue;
+			}
+			if (abs((*ListIter)->iX - character->iX) < dfARRANGE_DAMAGE_X && abs((*ListIter)->iY - character->iY) < dfARRANGE_DAMAGE_Y)
+			{
+
+				if ((*ListIter)->byHp - iDamage <= 0)
+					(*ListIter)->byHp = 0;
+				else
+					(*ListIter)->byHp -= iDamage;
+
+				MakePacket_DAMAGE(&_packetSz, character->dwClientNo, (*ListIter)->dwClientNo, (*ListIter)->byHp);
+				// 맞는애 중심으로 보낸다.
+				SendPacket_Around((*ListIter)->pSession, &_packetSz, true);
+				_packetSz.Clear();
+				break;
+			}
+		}
+	}
 }
 
 
@@ -879,7 +853,9 @@ void Network::SendPacket_Broadcast(st_SESSION * pSession, cPacketSerialz * packe
 //
 
 
-// 어떤 케릭터가 어떤 방향으로 이동을 시작함
+// ---------------------------------------------
+// 케릭터 이동
+// ---------------------------------------------
 int Network::netPacketProc_MoveStart(cPacketSerialz * packetSz, st_SESSION * pSession)
 {
 	st_CHARACTER * pCharacter = FindCharacter(pSession);
@@ -949,6 +925,9 @@ int Network::netPacketProc_MoveStart(cPacketSerialz * packetSz, st_SESSION * pSe
 	return 1;
 }
 
+// ---------------------------------------------
+// 케릭터 정지
+// ---------------------------------------------
 int Network::netPacketProc_MoveStop(cPacketSerialz * packetSz, st_SESSION * pSession)
 {
 	st_CHARACTER * pCharacter = FindCharacter(pSession);
@@ -1014,6 +993,9 @@ int Network::netPacketProc_MoveStop(cPacketSerialz * packetSz, st_SESSION * pSes
 	return 1;
 }
 
+// ---------------------------------------------
+// 케릭터 공격 패킷1
+// ---------------------------------------------
 int Network::netPacketProc_Attack1(cPacketSerialz * packetSz, st_SESSION * pSession)
 {
 	// 어느 방향으로 어디 위치에서 공격이 날아옴.
@@ -1045,6 +1027,9 @@ int Network::netPacketProc_Attack1(cPacketSerialz * packetSz, st_SESSION * pSess
 	return 1;
 }
 
+// ---------------------------------------------
+// 케릭터 공격 패킷2
+// ---------------------------------------------
 int Network::netPacketProc_Attack2(cPacketSerialz * packetSz, st_SESSION * pSession)
 {
 	st_CHARACTER * pCharacter = FindCharacter(pSession);
@@ -1075,6 +1060,9 @@ int Network::netPacketProc_Attack2(cPacketSerialz * packetSz, st_SESSION * pSess
 	return 1;
 }
 
+// ---------------------------------------------
+// 케릭터 공격 패킷3
+// ---------------------------------------------
 int Network::netPacketProc_Attack3(cPacketSerialz * packetSz, st_SESSION * pSession)
 {
 	st_CHARACTER * pCharacter = FindCharacter(pSession);

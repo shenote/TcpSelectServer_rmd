@@ -96,8 +96,8 @@ int main()
 			localtime_s(&timeinfo, &rawtime);
 			nowTick2 = GetTickCount();
 			//if(frame != 25)
-			printf("TIME : %s TPS : %llu FPS : %d loop : %d ConnectUser : %d\n", timeToString(&timeinfo), g_network._uiPPS, frame, netFrame,g_network.GetConnectCount());
-			g_network._uiPPS = 0;
+			printf("TIME : %s TPS : %llu FPS : %d loop : %d ConnectUser : %d\n", timeToString(&timeinfo), g_network._uiTPS, frame, netFrame,g_network.GetConnectCount());
+			g_network._uiTPS = 0;
 			frame = 0;
 			netFrame = 0;
 
