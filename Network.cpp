@@ -257,7 +257,6 @@ void Network::netSelectSocket(SOCKET * pTableSocket, FD_SET * pReadSet, FD_SET *
 			// 패킷 처리
 			if (FD_ISSET(pSession->socket, pReadSet))
 			{
-				// 클라에서는 하나주고 하나 받고, 받을 공간이 충분한데, 브로큰 때문에 못 받았다면.. 다음에 다시 받을 수 있지 않나?
 				int recvSize = recv(pSession->socket, pSession->recvQ.GetRearBufferPtr(), pSession->recvQ.GetNotBrokenPutSize(), 0);
 
 				pSession->recvQ.MoveRear(recvSize);
@@ -268,6 +267,8 @@ void Network::netSelectSocket(SOCKET * pTableSocket, FD_SET * pReadSet, FD_SET *
 					continue;
 				}
 
+				bool bExceptionClient = false;
+
 				// 처리할게 있으면 다 처리함
 				while (pSession->recvQ.GetUseSize() >= _headerSize)
 				{
@@ -277,19 +278,18 @@ void Network::netSelectSocket(SOCKET * pTableSocket, FD_SET * pReadSet, FD_SET *
 					case RECV_CHECK::RECV_OK:
 						break;
 					case RECV_CHECK::RECV_MORE:
+						bExceptionClient = true;
 						break;
 					case RECV_CHECK::RECV_ERROR:
+						bExceptionClient = true;
 						if (DisconnectSession(pSession->socket) == false)
-							_LOG(dfLOG_LEVEL_DEBUG, L"지워지지 않은 유저가 있습니다. %d", pSession->socket);
-						continue;
-						break;
-					default:
-						_LOG(dfLOG_LEVEL_DEBUG, L"잘못된 netProc_Recv return 정의. recv %d sk %d", recvSize, pSession->socket);
-						continue;
+							_LOG(dfLOG_LEVEL_ERROR, L"지워지지 않은 유저가 있습니다. %d", pSession->socket);
 						break;
 					}
+
+					if (bExceptionClient)
+						break;
 				}
-				int bb = 0;
 			}
 
 			// 보낼께 있는가?
@@ -307,7 +307,9 @@ void Network::netSelectSocket(SOCKET * pTableSocket, FD_SET * pReadSet, FD_SET *
 			// 보낼 수 있는 상태 인가 ?
 			if (FD_ISSET(pSession->socket, pWriteSet))
 			{
-				int sendSize = send(pSession->socket, pSession->sendQ.GetFrontBufferPtr(), pSession->sendQ.GetNotBrokenGetSize(), 0);
+				char sendBuf[10000];
+				pSession->sendQ.Peek(sendBuf, pSession->sendQ.GetUseSize());
+				int sendSize = send(pSession->socket, sendBuf, pSession->sendQ.GetUseSize(), 0);
 				pSession->sendQ.MoveFront(sendSize);
 			}
 		}
@@ -325,24 +327,24 @@ int Network::netProc_Recv(st_SESSION * pSession)
 	if (header.byCode != 0x89)
 		return RECV_CHECK::RECV_ERROR;
 
-	// 패킷의 페이로드 사이즈가 있는지 체크 부족하다면 더 받아야 한다.
-	if (header.bySize + _headerSize > pSession->recvQ.GetUseSize())
+	// 패킷의 페이로드 사이즈가 있는지 체크 부족하다면 더 받아야 한다.( 1 <<- 엔드 코드는 현재 선생님 더미 프로토콜에 삽입되어있다)
+	if (_headerSize + header.bySize + 1 > pSession->recvQ.GetUseSize())
 		return RECV_CHECK::RECV_MORE;
 
 	// 데이타그램 복사
 	char userDataGram[18000];
-	pSession->recvQ.Peek(userDataGram, header.bySize + _headerSize);
+	pSession->recvQ.Peek(userDataGram, _headerSize + header.bySize);
 
 	//// 체크썸 체크 체크섬 값,메시지 타입, 페이로드 크기, 버퍼
 	//if (CheckSum(header.byCheckSum, header.bySize, header.bySize, buf_ + _headerSize) == false)
 	//	return RECV_CHECK::RECV_ERROR;
 
 	// 모든 조건이 만족함 패킷을 처리 하면 됨.
-	if (CompleteRecvPacket(header.byType, userDataGram, header.bySize + _headerSize, pSession) == 0)
+	if (CompleteRecvPacket(header.byType, userDataGram, _headerSize + header.bySize, pSession) == 0)
 		return RECV_CHECK::RECV_ERROR;
 
 	// MovePtr + 패킷 엔드 코드
-	pSession->recvQ.MoveFront(header.bySize + _headerSize + 1);
+	pSession->recvQ.MoveFront(_headerSize + header.bySize + 1);
 
 	++_uiTPS;
 
@@ -376,12 +378,11 @@ int Network::CompleteRecvPacket(WORD wMsgType_, char * buf_, int bufSize_, st_SE
 	case dfPACKET_CS_ATTACK3:
 		iProcRet = netPacketProc_Attack3(&_packetSz, pSession);
 		break;
-	case 252:
-		_LOG(dfLOG_LEVEL_DEBUG, L"252Packet");
-		iProcRet = true;
+	case dfPACKET_CS_ECHO:
+		iProcRet = netPacketProc_Echo(&_packetSz, pSession);
 		break;
 	default:
-		iProcRet = false;
+		iProcRet = 0;
 		break;
 	}
 	return iProcRet;
@@ -397,7 +398,7 @@ st_SESSION * Network::CreateSession(SOCKET sk, SOCKADDR_IN sockAddr)
 	user->socket = sk;
 	user->sockAddr = sockAddr;
 	user->dwSessionID = ++g_uiUser;
-	_LOG(dfLOG_LEVEL_DEBUG, L"Accept - ip %S port %d", inet_ntoa(sockAddr.sin_addr), sockAddr.sin_port);
+	_LOG(dfLOG_LEVEL_ERROR, L"Accept - ip %S port %d", inet_ntoa(sockAddr.sin_addr), sockAddr.sin_port);
 	_mSessionList.insert(make_pair(sk, user));
 	return user;
 }
@@ -527,7 +528,7 @@ BOOL Network::DisconnectSession(SOCKET sk_)
 	{
 		if (iter->first == sk_)
 		{
-			_LOG(dfLOG_LEVEL_DEBUG, L"Disconnected - ip %S port %d", inet_ntoa(_mSessionList[sk_]->sockAddr.sin_addr), _mSessionList[sk_]->sockAddr.sin_port);
+			_LOG(dfLOG_LEVEL_ERROR, L"Disconnected - ip %S port %d", inet_ntoa(_mSessionList[sk_]->sockAddr.sin_addr), _mSessionList[sk_]->sockAddr.sin_port);
 
 			cPacketSerialz packetDelete;
 			// 1.RemoveSector 에 캐릭터 삭제 패킷 보내기
@@ -890,22 +891,18 @@ int Network::netPacketProc_MoveStart(cPacketSerialz * packetSz, st_SESSION * pSe
 		// 클라의 봐표랑 데드레커닝한 좌표랑 너무 틀리면 데드 레커닝 좌표로 클라를 조절 씬 패킷 날린다. 
 		if (abs(wdrX - x) > dfERROR_RANG || abs(wdrY - y) > dfERROR_RANG)
 		{
+			// 이전 좌표
+			_LOG(dfLOG_LEVEL_ERROR, L"# SYNE Client # Ms SessionID:%d / Dir:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, x, y);
+			_LOG(dfLOG_LEVEL_ERROR, L"# SYNE Server # Ms SessionID:%d / Dir:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, pCharacter->iX, pCharacter->iY);
 			// 씬 패킷을 수정된 x,y 로 자신에게 날림
 			MakePacket_Syne(packetSz, pCharacter->dwClientNo, wdrX, wdrY);
 			pSession->sendQ.Enqueue(packetSz->GetBufferPtr(), packetSz->GetDataSize());
-			_LOG(dfLOG_LEVEL_DEBUG, L"# SYNE # SessionID:%d / Direction:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, wdrX, wdrY);
+			_LOG(dfLOG_LEVEL_ERROR, L"# SYNE DeadFrame# Ms SessionID:%d / Dir:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, wdrX, wdrY);
 		}
 
 		// 실제 좌표
 		x = wdrX;
 		y = wdrY;
-	}
-
-	// Sector
-	if (Sector_UpdateCharacter(pCharacter))
-	{
-		// 섹터가 변경된 경우는 클라이언트 관련 정보를 쏜다. 
-		CharacterSectorUpdatePacket(pCharacter);
 	}
 
 	pCharacter->dwActionTick = GetTickCount();
@@ -915,6 +912,14 @@ int Network::netPacketProc_MoveStart(cPacketSerialz * packetSz, st_SESSION * pSe
 	pCharacter->iY = y;
 	pCharacter->iActionX = x;
 	pCharacter->iActionY = y;
+
+	// Sector
+	if (Sector_UpdateCharacter(pCharacter))
+	{
+		// 섹터가 변경된 경우는 클라이언트 관련 정보를 쏜다. 
+		CharacterSectorUpdatePacket(pCharacter);
+	}
+
 
 	packetSz->Clear();
 
@@ -958,16 +963,27 @@ int Network::netPacketProc_MoveStop(cPacketSerialz * packetSz, st_SESSION * pSes
 		// 클라의 봐표랑 데드레커닝한 좌표랑 너무 틀리면 데드 레커닝 좌표로 클라를 조절 씬 패킷 날린다. 
 		if (abs(wdrX - x) > dfERROR_RANG || abs(wdrY - y) > dfERROR_RANG)
 		{
+			// 이전 좌표
+			_LOG(dfLOG_LEVEL_ERROR, L"# SYNE Client # Mt SessionID:%d / Dir:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, x, y);
+			_LOG(dfLOG_LEVEL_ERROR, L"# SYNE Server # Mt SessionID:%d / Dir:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, pCharacter->iX, pCharacter->iY);
 			// 씬 패킷을 수정된 x,y 로 자신에게 날림
 			MakePacket_Syne(packetSz, pCharacter->dwClientNo, wdrX, wdrY);
 			pSession->sendQ.Enqueue(packetSz->GetBufferPtr(), packetSz->GetDataSize());
-			_LOG(dfLOG_LEVEL_DEBUG, L"# SYNE # SessionID:%d / Direction:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, wdrX, wdrY);
+			_LOG(dfLOG_LEVEL_ERROR, L"# SYNE DeadFrame# Mt SessionID:%d / Dir:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, wdrX, wdrY);
 		}
 
 		// 실제 좌표
 		x = wdrX;
 		y = wdrY;
 	}
+
+	pCharacter->dwActionTick = GetTickCount();
+	pCharacter->byDirection = byDir;
+	pCharacter->dwAction = dfPACKET_SC_MOVE_STOP;
+	pCharacter->iX = x;
+	pCharacter->iY = y;
+	pCharacter->iActionX = x;
+	pCharacter->iActionY = y;
 
 	// Sector
 	if (Sector_UpdateCharacter(pCharacter))
@@ -976,13 +992,6 @@ int Network::netPacketProc_MoveStop(cPacketSerialz * packetSz, st_SESSION * pSes
 		CharacterSectorUpdatePacket(pCharacter);
 	}
 	//_LOG(dfLOG_LEVEL_DEBUG, L"# MOVESTOP # SessionID:%d / Direction:%d / X:%d / Y:%d", pSession->dwSessionID, byDir, x, y);
-	pCharacter->dwActionTick = GetTickCount();
-	pCharacter->byDirection = byDir;
-	pCharacter->dwAction = dfPACKET_SC_MOVE_STOP;
-	pCharacter->iX = x;
-	pCharacter->iY = y;
-	pCharacter->iActionX = x;
-	pCharacter->iActionY = y;
 
 	packetSz->Clear();
 
@@ -1089,6 +1098,17 @@ int Network::netPacketProc_Attack3(cPacketSerialz * packetSz, st_SESSION * pSess
 
 	// 공격 검사
 	DamageHitAround(pSession, 5);
+
+	return 1;
+}
+
+int Network::netPacketProc_Echo(cPacketSerialz * packetSz, st_SESSION * pSession)
+{
+	DWORD dwTime = 0;
+	*packetSz >> dwTime;
+	packetSz->Clear();
+	MakePacket_EHCO(packetSz, dwTime);
+	SendPacket_Unicast(pSession, packetSz);
 
 	return 1;
 }

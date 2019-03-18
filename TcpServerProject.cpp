@@ -21,42 +21,39 @@ list<st_CHARACTER*> g_Sector[dfSECTOR_PIXEL_HEIGHT][dfSECTOR_PIXEL_WIDTH];
 
 void Log(WCHAR *szString, int iLogLevel)
 {
+	time_t rawtime;
+	struct tm timeinfo;
+
+	// 로그남김
+	time(&rawtime);
+	localtime_s(&timeinfo, &rawtime);
+
+	WCHAR wLogContent[512];
+	swprintf_s(wLogContent, L"[%02d/%02d/%02d %02d:%02d:%02d] %s\n", timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_year - 100, timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec, szString);
+
 	switch (iLogLevel)
 	{
 		case dfLOG_LEVEL_DEBUG:
-			wprintf(L"%s\n", szString);
+			wprintf(L"%s", wLogContent);
 			break;
 		case dfLOG_LEVEL_WARNING:
 			break;
 		case dfLOG_LEVEL_ERROR:
 		{
-			//time_t rawtime;
-			//struct tm timeinfo;
+			wprintf(L"%s", wLogContent);
 
-			//// 로그남김
-			//time(&rawtime);
-			//localtime_s(&timeinfo, &rawtime);
-			//FILE * fp;
-			//fopen_s(&fp, "log.txt", "a+");
-			//fwrite(szString, wcslen(szString) * 2, 1, fp);
-			//fclose(fp);
+			WCHAR wLogName[128];
+			swprintf_s(wLogName, L"%02d-%02d-%02d Log.txt", timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_year - 100, timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+
+			FILE * fp;
+			_wfopen_s(&fp, wLogName, L"a+");
+			fwprintf_s(fp, wLogContent);
+			fclose(fp);
 		}
 			break;
 	}
 }
 
-
-char * timeToString(struct tm * t)
-{
-	static char s[20];
-
-	sprintf_s(s, "%04d-%02d-%02d %02d:%02d:%02d",
-		t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
-		t->tm_hour, t->tm_min, t->tm_sec
-	);
-
-	return s;
-}
 int main()
 {
 	srand(12345);
@@ -71,12 +68,18 @@ int main()
 	// 유니코드
 	_wsetlocale(LC_ALL, L"korean");
 
+	// 로그남김
+	time(&rawtime);
+	localtime_s(&timeinfo, &rawtime);
+
 	g_network.init();
 
 	//_LOG(0, L"%d", 2);
 	DWORD nowTick2 = GetTickCount();
 	int frame = 0;
 	int netFrame = 0;
+	int checkLogCnt = 0;
+
 	while (g_main)
 	{
 		g_network.netIOProcess();
@@ -92,32 +95,22 @@ int main()
 
 		if (prevTick2 >= 1000)
 		{
+			checkLogCnt++;
+
 			time(&rawtime);
 			localtime_s(&timeinfo, &rawtime);
 			nowTick2 = GetTickCount();
-			//if(frame != 25)
-			printf("TIME : %s TPS : %llu FPS : %d loop : %d ConnectUser : %d\n", timeToString(&timeinfo), g_network._uiTPS, frame, netFrame,g_network.GetConnectCount());
+			if(frame != 25)
+				_LOG(dfLOG_LEVEL_ERROR, L"TPS : %d FPS : %d loop : %d ConnectUser : %d", g_network._uiTPS, frame, netFrame, g_network.GetConnectCount());
+
+	/*		if (checkLogCnt == 60)
+			{
+				checkLogCnt = 0;
+				_LOG(dfLOG_LEVEL_ERROR, L"TPS : %d FPS : %d loop : %d ConnectUser : %d", g_network._uiTPS, frame, netFrame, g_network.GetConnectCount());
+			}*/
 			g_network._uiTPS = 0;
 			frame = 0;
 			netFrame = 0;
-
-			//for (int i = 0; i < dfSECTOR_PIXEL_HEIGHT; ++i)
-			//{
-			//	for (int j = 0; j < dfSECTOR_PIXEL_WIDTH; ++j)
-			//	{
-			//		if (g_Sector[j][i].size() == 0)
-			//			continue;
-			//		auto iter = g_Sector[j][i].begin();
-			//		printf("Sector[%d][%d] Cnt : %d [", j, i, g_Sector[j][i].size());
-			//		for (;iter != g_Sector[j][i].end(); ++iter)
-			//		{
-			//			printf("%d,", (*iter)->dwClientNo);
-			//		}
-			//		printf("\n");
-			//	}
-			//}
 		}
-		
 	}
-
 }

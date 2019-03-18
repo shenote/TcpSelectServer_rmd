@@ -60,8 +60,9 @@ public:
 	int			netPacketProc_Attack1(cPacketSerialz * packetSz, st_SESSION * pSession);
 	int			netPacketProc_Attack2(cPacketSerialz * packetSz, st_SESSION * pSession);
 	int			netPacketProc_Attack3(cPacketSerialz * packetSz, st_SESSION * pSession);
+	int			netPacketProc_Echo(cPacketSerialz * packetSz, st_SESSION * pSession);
 
-	UINT64						_uiTPS;
+	UINT						_uiTPS;
 private:
 
 	BOOL						_bConnect;

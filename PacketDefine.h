@@ -1,6 +1,10 @@
 #pragma once
 #include <winsock.h>
 
+#ifndef __PROTOCOL_
+#define __PROTOCOL__
+
+
 #define dfNETWORK_PORT 20000
 #define dfPACKET_CODE 0x89
 #define dfPACKET_END_CODE 0x79
@@ -426,3 +430,21 @@ struct stPACKET_SC_SYNC
 
 #pragma pack(pop, 0)
 
+
+#define	dfPACKET_CS_ECHO						252
+//---------------------------------------------------------------
+// Echo 용 패킷					Client -> Server
+//
+//	4	-	Time
+//
+//---------------------------------------------------------------
+
+#define	dfPACKET_SC_ECHO						253
+//---------------------------------------------------------------
+// Echo 응답 패킷				Server -> Client
+//
+//	4	-	Time
+//
+//---------------------------------------------------------------
+
+#endif

@@ -53,8 +53,8 @@ using namespace std;
 #define dfRANGE_MOVE_RIGHT	6400
 #define dfRANGE_MOVE_BOTTOM	6400
 
-#define dfSECTOR_MAX_X 64
-#define dfSECTOR_MAX_Y 64
+#define dfSECTOR_MAX_X 50
+#define dfSECTOR_MAX_Y 50
 #define dfSECTOR_PIXEL_WIDTH (dfRANGE_MOVE_RIGHT / dfSECTOR_MAX_X)
 #define dfSECTOR_PIXEL_HEIGHT (dfRANGE_MOVE_BOTTOM / dfSECTOR_MAX_Y)
 

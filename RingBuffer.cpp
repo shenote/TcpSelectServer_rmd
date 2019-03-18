@@ -5,7 +5,8 @@ RingBuffer::RingBuffer()
 {
 	_pBuffer = new char[eRingBuffer::MAX_BUF_SIZE];
 	_iBufferSize = eRingBuffer::MAX_BUF_SIZE;
-	ClearBuffer();
+	_iRear = 0;
+	_iFront = 0;
 }
 
 RingBuffer::RingBuffer(int iBufferSize)

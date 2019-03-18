@@ -485,3 +485,15 @@ void MakePacket_Syne(cPacketSerialz * packetSz, DWORD id, WORD x, WORD y)
 	*packetSz << y;
 	*packetSz << (BYTE)dfPACKET_END_CODE;
 }
+
+void MakePacket_EHCO(cPacketSerialz * packetSz, DWORD dwTime)
+{
+	st_PACKET_HEADER header;
+	header.byCode = dfPACKET_CODE;
+	header.byType = dfPACKET_SC_ECHO;
+	header.bySize = sizeof(DWORD);
+
+	*packetSz << header;
+	*packetSz << dwTime;
+	*packetSz << (BYTE)dfPACKET_END_CODE;
+}

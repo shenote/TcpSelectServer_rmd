@@ -29,6 +29,10 @@ void MakePacket_DAMAGE(cPacketSerialz * packetSz, DWORD dwAttackID, DWORD dwDama
 
 // 씬 패킷
 void MakePacket_Syne(cPacketSerialz * packetSz, DWORD id, WORD x, WORD y);
+
+// ECHO
+void MakePacket_EHCO(cPacketSerialz * packetSz, DWORD dwTime);
+
 //
 //// 회원가입
 //void MakePacket_ResAddAcount(cPacketSerialz * packetSz, UINT64 AccountNo);
