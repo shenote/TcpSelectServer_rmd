@@ -7,6 +7,7 @@ RingBuffer::RingBuffer()
 	_iBufferSize = eRingBuffer::MAX_BUF_SIZE;
 	_iRear = 0;
 	_iFront = 0;
+	_initCiritical = false;
 }
 
 RingBuffer::RingBuffer(int iBufferSize)
@@ -18,92 +19,107 @@ RingBuffer::RingBuffer(int iBufferSize)
 RingBuffer::~RingBuffer()
 {
 	delete[] _pBuffer;
+	if (_initCiritical == true)
+	{
+		DeleteCriticalSection(&_cs);
+	}
 }
 
-unsigned int RingBuffer::GetBufferSize(void)
+int RingBuffer::GetBufferSize(void)
 {
 	return _iBufferSize;
 }
 
-unsigned int RingBuffer::GetUseSize(void)
+int RingBuffer::GetUseSize(void)
 {
-	// »ç¿ë ÇÏ°í ÀÖ´Â »çÀÌÁî
+	// ì‚¬ìš© í•˜ê³  ìˆëŠ” ì‚¬ì´ì¦ˆ
 	int useSize = 0;
-	if (_iRear > _iFront)
+
+	// ë©€í‹° ìŠ¤ë ˆë“œ ì„¸ì´í”„ ì½”ë“œ
+	int rear = _iRear;
+	int front = _iFront;
+
+	if (rear > front)
 	{
-		useSize = _iRear - _iFront;
+		useSize = rear - front;
 	}
-	else if (_iRear < _iFront)
+	else if (rear < front)
 	{
-		useSize = _iBufferSize - (_iFront - _iRear);
+		useSize = _iBufferSize - (front - rear);
 	}
 
 	return useSize;
 }
 
-unsigned int RingBuffer::GetFreeSize(void)
+int RingBuffer::GetFreeSize(void)
 {
 	int freeSize = 0;
 
-	if (_iRear < _iFront)
-	{
-		// ¸®¾î°¡ ÇÁ·ĞÆ® º¸´Ù ÀÛ´Ù¸é, ¸®¾î°¡ ÇÑ¹ÙÄû µ¹¾Æ ¿Óµû´Â°ÅÀÓ
-		freeSize = (_iFront - _iRear) - 1;
-	}
-	else if (_iRear > _iFront)
-	{
-		// ÀüÃ¼ - (¸®¾î - ÇÁ·ĞÆ®);
-		freeSize = _iBufferSize - (_iRear - _iFront) - 1;
-	}
+	// ë©€í‹° ìŠ¤ë ˆë“œ ì„¸ì´í”„ ì½”ë“œ
+	int rear = _iRear;
+	int front = _iFront;
+
+	if (rear < front)
+		freeSize = (front - rear) - 1;
+	else if (rear > front)
+		freeSize = _iBufferSize - (rear - front) - 1;
 	else
-	{
-		// ÀÏÄ¡ÇÒ¶§
 		freeSize = _iBufferSize - 1;
-	}
 
 	return freeSize;
 }
 
-unsigned int RingBuffer::GetNotBrokenGetSize(void)
+int RingBuffer::GetNotBrokenGetSize(void)
 {
-	// ²÷¾îÁöÁö ¾Ê°í °¡Á® ¿Ã ¼ö ÀÖ´Â »çÀÌÁî
+	// ëŠì–´ì§€ì§€ ì•Šê³  ê°€ì ¸ ì˜¬ ìˆ˜ ìˆëŠ” ì‚¬ì´ì¦ˆ
 	int getSize = 0;
 
-	if (_iRear > _iFront)
-		getSize = (_iRear - _iFront);
-	else if (_iRear < _iFront)
-		getSize = (_iBufferSize - _iFront);
+	// ë©€í‹° ìŠ¤ë ˆë“œ ì„¸ì´í”„ ì½”ë“œ
+	int rear = _iRear;
+	int front = _iFront;
+
+	if (rear > front)
+		getSize = (rear - front);
+	else if (rear < front)
+		getSize = (_iBufferSize - front);
 
 	return getSize;
 }
 
-unsigned int RingBuffer::GetNotBrokenPutSize(void)
+int RingBuffer::GetNotBrokenPutSize(void)
 {
-	// ²÷¾îÁöÁö ¾Ê°í ³ÖÀ» ¼ö ÀÖ´Â ¿ë·®
+	// ëŠì–´ì§€ì§€ ì•Šê³  ë„£ì„ ìˆ˜ ìˆëŠ” ìš©ëŸ‰
 	int putSize = 0;
 
-	if (_iRear < _iFront)
-		putSize = (_iFront - _iRear);
-	else if (_iRear > _iFront)
-		putSize = (_iBufferSize - _iRear);
+	// ë©€í‹° ìŠ¤ë ˆë“œ ì„¸ì´í”„ ì½”ë“œ
+	int rear = _iRear;
+	int front = _iFront;
+
+	if (rear < front)
+		putSize = (front - rear);
+	else if (rear > front)
+		putSize = (_iBufferSize - rear);
 	else
-		putSize = _iBufferSize - _iRear;
+		putSize = _iBufferSize - rear;
 
 	return putSize;
 }
 
-unsigned int RingBuffer::Enqueue(char * chpData, unsigned int iSize)
+int RingBuffer::Enqueue(char * chpData, int iSize)
 {
-	unsigned int enqueueSize = 0;
-	unsigned int getFreeSize = GetFreeSize();
-	// ³ÖÀ» ¼ö ¾ø´Â°¡?
+	int enqueueSize = 0;
+	int getFreeSize = GetFreeSize();
+	// ë„£ì„ ìˆ˜ ì—†ëŠ”ê°€?
 	if (getFreeSize < iSize)
 		return 0;
 
-	// ²÷¾îÁöÁö ¾Ê°í ³ÖÀ» ¼ö ÀÖ´Â °ø°£Àº ¾ó¸¶ÀÎ°¡?
-	unsigned int getBrokenPutSize = GetNotBrokenPutSize();
+	// ëŠì–´ì§€ì§€ ì•Šê³  ë„£ì„ ìˆ˜ ìˆëŠ” ê³µê°„ì€ ì–¼ë§ˆì¸ê°€?
+	int getBrokenPutSize = GetNotBrokenPutSize();
 
-	// ²÷¾îÁöÁö ¾Ê°í ³ÖÀ» ¼ö ÀÖ´Â °ø°£ÀÌ ÀÖ´Â°¡? 
+	if (getBrokenPutSize < 0)
+		return 0;
+
+	// ëŠì–´ì§€ì§€ ì•Šê³  ë„£ì„ ìˆ˜ ìˆëŠ” ê³µê°„ì´ ìˆëŠ”ê°€? 
 	if (getBrokenPutSize > iSize - 1)
 	{
 		memcpy(_pBuffer + _iRear, chpData, iSize);
@@ -112,10 +128,10 @@ unsigned int RingBuffer::Enqueue(char * chpData, unsigned int iSize)
 	}
 	else
 	{
-		// ²÷¾î ³Ö±â.
+		// ëŠì–´ ë„£ê¸°.
 		if (getBrokenPutSize != 0)
 			memcpy(_pBuffer + _iRear, chpData, getBrokenPutSize);
-		// ³ª¸ÓÁö ³Ö±â ¸®¾î´Â 
+		// ë‚˜ë¨¸ì§€ ë„£ê¸° ë¦¬ì–´ëŠ” 
 		memcpy(_pBuffer + 0, chpData + getBrokenPutSize, iSize - getBrokenPutSize);
 		_iRear = (_iRear + iSize) % _iBufferSize;
 
@@ -126,24 +142,32 @@ unsigned int RingBuffer::Enqueue(char * chpData, unsigned int iSize)
 	return enqueueSize;
 }
 
-unsigned int RingBuffer::Dequeue(char * chpData, unsigned int iSize)
+int RingBuffer::Dequeue(char * chpData, int iSize)
 {
-	// ÇöÀç ÇÁ·ĞÆ® ¿¡¼­ »çÀÌÁî ¸¸Å­ »©´Âµ¥, ºê·ÎÅ«¿¡ °É·Á ÀÖ´Â°¡? ¾ø´Â°¡?
-	unsigned int dequeueSize = 0;
-	unsigned int getBrokenGetSize = GetNotBrokenGetSize();
+	int getUseSize = GetUseSize();
+	if (getUseSize < iSize)
+		return 0;
+
+	// í˜„ì¬ í”„ë¡ íŠ¸ ì—ì„œ ì‚¬ì´ì¦ˆ ë§Œí¼ ë¹¼ëŠ”ë°, ë¸Œë¡œí°ì— ê±¸ë ¤ ìˆëŠ”ê°€? ì—†ëŠ”ê°€?
+	int dequeueSize = 0;
+	int getBrokenGetSize = GetNotBrokenGetSize();
+
+	if (getBrokenGetSize < 0)
+		return 0;
+
 	if (getBrokenGetSize > iSize - 1)
 	{
-		// ±×³É º¹»çÇØ¼­ °¡Á®¿È 
+		// ê·¸ëƒ¥ ë³µì‚¬í•´ì„œ ê°€ì ¸ì˜´ 
 		memcpy(chpData, _pBuffer + _iFront, iSize);
 		_iFront = (_iFront + iSize) % _iBufferSize;
 		dequeueSize = iSize;
 	}
 	else
 	{
-		// ²÷¾î¼­ °¡Á®¿À±â
+		// ëŠì–´ì„œ ê°€ì ¸ì˜¤ê¸°
 		if (getBrokenGetSize != 0)
 			memcpy(chpData, _pBuffer + _iFront, getBrokenGetSize);
-		// ³ª¸ÓÁö °¡Á®¿À±â
+		// ë‚˜ë¨¸ì§€ ê°€ì ¸ì˜¤ê¸°
 		memcpy(chpData + getBrokenGetSize, _pBuffer + 0, iSize - getBrokenGetSize);
 		_iFront = (_iFront + iSize) % _iBufferSize;
 
@@ -153,14 +177,18 @@ unsigned int RingBuffer::Dequeue(char * chpData, unsigned int iSize)
 	return dequeueSize;
 }
 
-// º¹»çÇØ¼­ »©±â
-unsigned int RingBuffer::Peek(char * chpData, unsigned int iSize)
+// ë³µì‚¬í•´ì„œ ë¹¼ê¸°
+int RingBuffer::Peek(char * chpData, int iSize)
 {
 	if (GetUseSize() < iSize - 1)
 		return 0;
 
-	unsigned int peekSize = 0;
-	unsigned int getBrokenGetSize = GetNotBrokenGetSize();
+	int peekSize = 0;
+	int getBrokenGetSize = GetNotBrokenGetSize();
+
+	if (getBrokenGetSize < 0)
+		return 0;
+
 	if (getBrokenGetSize > iSize - 1)
 	{
 		memcpy(chpData, _pBuffer + _iFront, iSize);
@@ -168,10 +196,10 @@ unsigned int RingBuffer::Peek(char * chpData, unsigned int iSize)
 	}
 	else
 	{
-		// ²÷¾î¼­ °¡Á®¿À±â
+		// ëŠì–´ì„œ ê°€ì ¸ì˜¤ê¸°
 		if (getBrokenGetSize != 0)
 			memcpy(chpData, _pBuffer + _iFront, getBrokenGetSize);
-		// ³ª¸ÓÁö °¡Á®¿À±â
+		// ë‚˜ë¨¸ì§€ ê°€ì ¸ì˜¤ê¸°
 		memcpy(chpData + getBrokenGetSize, _pBuffer + 0, iSize - getBrokenGetSize);
 
 		peekSize = iSize;
@@ -182,16 +210,48 @@ unsigned int RingBuffer::Peek(char * chpData, unsigned int iSize)
 
 void RingBuffer::MoveRear(int iSize)
 {
-	// ¼öµ¿À¸·Î ¿Å°ÜÁØ´Ù.
+	// ìˆ˜ë™ìœ¼ë¡œ ì˜®ê²¨ì¤€ë‹¤.
 	_iRear = (_iRear + iSize) % _iBufferSize;
 }
 
-unsigned int RingBuffer::MoveFront(unsigned int iSize)
+void RingBuffer::MoveFront(int iSize)
 {
-	// ¼öµ¿À¸·Î ¿Å°ÜÁÖ°í
+	// ìˆ˜ë™ìœ¼ë¡œ ì˜®ê²¨ì£¼ê³ 
 	_iFront = (_iFront + iSize) % _iBufferSize;
-	return 0;
 }
+
+void RingBuffer::ClearBuffer(void)
+{
+	_iRear = 0;
+	_iFront = 0;
+}
+
+char * RingBuffer::GetFrontBufferPtr(void)
+{
+	return _pBuffer + _iFront;
+}
+
+char * RingBuffer::GetRearBufferPtr(void)
+{
+	return _pBuffer + _iRear;
+}
+
+void RingBuffer::Lock(void)
+{
+	if (_initCiritical == false)
+	{
+		InitializeCriticalSection(&_cs);
+		_initCiritical = true;
+	}
+
+	EnterCriticalSection(&_cs);
+}
+
+void RingBuffer::Unlock(void)
+{
+	LeaveCriticalSection(&_cs);
+}
+
 
 void RingBuffer::ClearBuffer(void)
 {
